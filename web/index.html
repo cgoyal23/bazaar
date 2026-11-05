@@ -119,6 +119,12 @@ pre{font:12px/1.5 var(--mono);background:#fbfaf7;border:1px solid var(--line);bo
       <button data-s="pls arrange 5k leather sleeves for laptops, deliver bangalore before Dec 15th, budget 12L max">Messy wording</button>
       <button data-s="5000 13-inch leather laptop sleeves delivered in Bengaluru by 2026-12-15 at max ₹240 per unit">Per-unit budget</button>
       <button data-s="We need leather laptop sleeves for the office in Bengaluru, quickly">Missing fields</button>
+      <button data-s="we need 12000 Diet cokes under a budget of 3.5 lakh">Diet Coke (any category)</button>
+      <button data-s="50 laptops for our Pune team by 10 December, budget 30 lakh">Laptops (needs approval)</button>
+      <span class="small" style="align-self:center;margin-left:8px">Vendor check:</span>
+      <button data-s="Here is a new vendor's name and website: Hindustan Coca-Cola Beverages, hccb.in. Tell me whether it is a real, trading business: who runs it, how long it has existed, and anything that looks off.">Real vendor</button>
+      <button data-s="Here is a new vendor's name and website: Mirza International, mirzaindia.com. Tell me whether it is a real, trading business: who runs it, how long it has existed, and anything that looks off.">Name mismatch</button>
+      <button data-s="Here is a new vendor's name and website: Zestora Leather Hub, zestora-leather.example. Tell me whether it is a real, trading business: who runs it, how long it has existed, and anything that looks off.">Fake vendor</button>
     </div>
   </div>
 
@@ -174,7 +180,7 @@ $("go").onclick = async () => {
 $("kill").onclick = () => fetch(`/api/runs/${runId}/kill`,{method:"POST"});
 $("resume").onclick = () => fetch(`/api/runs/${runId}/resume`,{method:"POST"});
 $("reveal").onclick = async () => {
-  const r = await fetch("/api/testworld").then(r=>r.json());
+  const r = await fetch("/api/testworld" + (runId ? `?run=${runId}` : "")).then(r=>r.json());
   $("modalBody").innerHTML = `<h2>The hostile test world <button class="ghost" style="margin-left:auto" onclick="$('modal').hidden=true">Close</button></h2>
    <p class="small">Every supplier is a fictional simulated agent on a reserved <code>.example</code> domain. Bazaar's buyer agents
    only see what suppliers say; they never see these instructions.</p>` +
@@ -237,6 +243,9 @@ function renderPipeline(s){
 }
 
 function renderPlan(s){
+  const vc = s.outputs.vendor_check;
+  if (vc){ $("plan").className=""; $("plan").innerHTML = `<div class="kv"><div>Request</div><div><b>Vendor check</b> — no purchase, no money moves</div>
+    <div>Vendor</div><div>${esc(vc.vendor.name||"(name not given)")} · <b>${esc(vc.vendor.domain)}</b>${vc.fictional?' <span class="badge b-warn">fictional sandbox</span>':''}</div></div>`; return; }
   const p = s.outputs.plan; if (!p) return;
   if (p.status !== "ok"){ $("plan").innerHTML = `<div class="badge b-warn">needs input</div><ul>${p.questions.map(q=>`<li>${esc(q)}</li>`).join("")}</ul><div class="small"><b>Type your answers under “Exceptions for a human”</b> — the same run continues from there.</div>`; return; }
   $("plan").className="";
@@ -319,6 +328,7 @@ function renderExceptions(s){
       ${failed.length?`<ul class="checks">${failed.map(c=>`<li><span>⛔</span><span>${esc(c.detail)}</span></li>`).join("")}</ul>`:""}
       ${x.kind==="needs_input" && x.status==="open" && x.detail.ask ? answerForm(x, s) :
         x.detail.questions?`<ul>${x.detail.questions.map(q=>`<li>${esc(q)}</li>`).join("")}</ul>`:""}
+      ${x.kind==="vendor_review" && x.detail.reasons?`<ul class="checks">${x.detail.reasons.map(r=>`<li><span>•</span><span>${esc(r)}</span></li>`).join("")}</ul>`:""}
       ${x.detail.recommended_action?`<div class="small"><b>Recommended:</b> ${esc(x.detail.recommended_action)}</div>`:""}
       ${x.resolution?`<div class="small" style="margin-top:4px"><b>Resolution:</b> ${esc(x.resolution)}</div>`:""}
       ${x.status==="open" && x.kind==="approval_needed" ? `<div class="acts"><button class="primary" onclick="resolveExc(${x.id},'approve')">Approve payment</button><button class="danger" onclick="resolveExc(${x.id},'reject')">Reject</button></div>`:""}
@@ -349,7 +359,23 @@ function renderAudit(s){
       <div class="src">${(d.evidence||[]).slice(0,6).map(e=>e.fact_id?`fact #${e.fact_id} ${esc(e.key)} (${esc(e.source)})`:esc(e.rule||e.field||"")).join(" · ")}</div></div>`).join("")}</details>`;
 }
 
+function renderVendor(vc){
+  const cls = {REAL_AND_TRADING:"b-ok",CAUTION:"b-warn",HIGH_RISK:"b-bad",UNVERIFIABLE:"b-warn"}[vc.verdict];
+  const p = vc.profile || {};
+  const icon = c => c.ok===true?"✅":c.ok===null?"❔":c.severity==="critical"?"⛔":c.severity==="review"?"🔎":"⚠️";
+  return `<h2>Vendor check</h2>
+    <div style="margin-bottom:8px"><span class="badge ${cls}">${esc(vc.verdict.replaceAll("_"," "))}</span> <b>${esc(vc.headline)}</b></div>
+    <div class="kv" style="margin-bottom:8px">
+      <div>Registered name</div><div>${esc(p.registered_name||"not confirmed")}</div>
+      <div>Who runs it</div><div>${(p.people||[]).map(x=>`${esc(x.name)} <span class="small">(${esc(x.title)})</span>`).join("; ")||'<span class="small">not on record</span>'}</div>
+      <div>How long</div><div>${p.year_founded?`founded ${p.year_founded} (${p.age_years} years)`:'<span class="small">not on record</span>'}</div>
+      <div>Size</div><div>${p.headcount!=null?`${p.headcount} people`+(p.headcount_6mo_ago?` · ${p.headcount_6mo_ago} six months ago`:""):'<span class="small">not on record</span>'}${p.headquarters?` · ${esc(p.headquarters)}`:""}</div>
+      ${vc.reasons.length?`<div>What looks off</div><div>${vc.reasons.map(esc).join("<br>")}</div>`:""}</div>
+    <ul class="checks">${vc.checks.map(c=>`<li><span>${icon(c)}</span><span>${esc(c.detail)} <span class="src">— ${esc(c.source)} · fact #${c.fact_id}</span></span></li>`).join("")}</ul>`;
+}
+
 function renderOutcome(s){
+  if (s.outputs.vendor_check){ $("outcome").hidden = false; $("outcome").innerHTML = renderVendor(s.outputs.vendor_check); return; }
   const c = s.outputs.contract, p = s.outputs.payment_advance;
   if (!s.outputs.audit || !c || c.status!=="signed") { $("outcome").hidden = true; return; }
   $("outcome").hidden = false;

@@ -33,6 +33,7 @@ def transit_days(origin: str, dest: str) -> int:
 # A sandbox registry shaped like Crustdata's company record, for fictional firms only.
 REGISTRY = {
     "vantrix-leather.example": {
+        "people": [{"name": "Rakesh Vantrix", "title": "Proprietor (sandbox)"}],
         "legal_name": "Vantrix Leather Manufacturing", "trade_names": [],
         "registration_id": "SIM-U19201UP2019PTC110233", "year_founded": 2019,
         "headcount": 11, "headcount_6mo_ago": 12, "hq_city": "Agra", "country": "IND",
@@ -40,6 +41,7 @@ REGISTRY = {
         "web_mentions": [{"title": "Vantrix Leather at Agra artisan fair (sandbox)", "date": "2026-03-02"}],
     },
     "ambrel-leather.example": {
+        "people": [{"name": "Anil Ambrel", "title": "Managing Director (sandbox)"}],
         "legal_name": "Ambrel Leatherworks Pvt Ltd", "trade_names": ["Ambrel"],
         "registration_id": "SIM-U19129UP2011PTC000417", "year_founded": 2011,
         "headcount": 140, "headcount_6mo_ago": 131, "hq_city": "Kanpur", "country": "IND",
@@ -47,6 +49,7 @@ REGISTRY = {
         "web_mentions": [{"title": "Ambrel Leatherworks ships 40,000 bags to EU buyer (sandbox)", "date": "2026-08-14"}],
     },
     "sarvaka-leather.example": {
+        "people": [{"name": "Meera Iyer", "title": "Managing Director (sandbox)"}, {"name": "K. Raman", "title": "CFO (sandbox)"}],
         "legal_name": "Sarvaka Leather Co. Pvt Ltd", "trade_names": ["Sarvaka Leather Co.", "Sarvaka Exports Pvt. Ltd."],
         "registration_id": "SIM-U19116TN2008PTC067721", "year_founded": 2008,
         "headcount": 210, "headcount_6mo_ago": 196, "hq_city": "Ambur", "country": "IND",
@@ -55,6 +58,7 @@ REGISTRY = {
                          {"title": "Sarvaka Leather on LWG-audited tannery list (sandbox)", "date": "2025-11-30"}],
     },
     "ojasvi-hidecraft.example": {
+        "people": [{"name": "Ojas Mishra", "title": "Designated Partner (sandbox)"}],
         "legal_name": "Ojasvi Hidecraft LLP", "trade_names": ["Ojasvi Hidecraft"],
         "registration_id": "SIM-AAB-7731-UP2015", "year_founded": 2015,
         "headcount": 85, "headcount_6mo_ago": 88, "hq_city": "Kanpur", "country": "IND",
@@ -449,6 +453,11 @@ class SandboxRegistry:
         if domain in self._flaky and domain not in self._tripped:
             self._tripped.add(domain)
             raise TimeoutError("registry lookup timed out (simulated flaky tool)")
+        rec = self._registry.get(domain)
+        return dict(rec) if rec else None
+
+    def record(self, domain: str):
+        """A registry record without the simulated flakiness (used by the vendor check)."""
         rec = self._registry.get(domain)
         return dict(rec) if rec else None
 

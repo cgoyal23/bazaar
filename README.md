@@ -36,11 +36,17 @@ PO-xxxx-02 countersigned with Sarvaka Leather Co. — 5,000 × ₹229 = ₹11,45
 | **Payments** | Matches the invoice against the PO, the vendor master and a penny drop, then pays the advance with an idempotency key and posts a double-entry ledger line | Exactly-once payment through a payment intent, a bank that honours idempotency keys, and a ledger that is UNIQUE per transfer. A bank-detail change is **always** held for a human. |
 | **Auditor** | Links every decision to its evidence, re-derives every number, checks contradictions, and verifies the hash-chained event log | It recomputes from raw records instead of trusting the other agents' summaries |
 
-**Where a human is still needed:** missing request fields, a bank-detail change, payments above the auto-pay limit (₹5 lakh), and the case where no supplier signs as agreed. Those are the cases where a person's answer changes the result. When the Planner is missing a field, the **Exceptions for a human** card shows one answer box per question. Each answer is read with that field's own parser, so an unreadable answer such as "soon" is asked again, not guessed. The same run then continues.
+| **Vendor check** (Verifier) | Answers "here is a new vendor's name and website — is it real, who runs it, how long has it existed, what looks off?" for any real company, from Crustdata Identify, Enrich (people, news, headcount history) and Web Search | Confirms the matched record actually owns the domain before using any number from it. A name that doesn't match is a caution plus a name lookup, not a rejection. Adverse news goes to a person to read, and a company named as the *victim* of counterfeiting is recognised as such. |
+
+**Any product, not only leather.** [catalog.py](bazaar/catalog.py) holds product categories (leather goods, beverages, packaged food, IT hardware, furniture, stationery, apparel, plus a general fallback). Each has price-book benchmarks for common items, a capacity model and Crustdata search terms. "We need 12000 Diet cokes under a budget of 3.5 lakh" is beverages at a ₹34 benchmark. It completes end to end: Ambrel's ₹27 → ₹30 contract switch is caught, Sarvaka Beverages signs at ₹29 × 12,000 = ₹3,48,000, and the lookalike `sarvaka-beverag3s.example` fraud is held.
+
+**Buyer profile.** A request that omits the delivery city or the deadline uses the buyer's ship-to city (Bengaluru) and a standard 30-day lead time. These are shown as assumptions on the plan, never silently.
+
+**Where a human is still needed:** missing request fields, a bank-detail change, payments above the auto-pay limit (₹5 lakh: press **Approve payment** and the run resumes and pays once through the same idempotency key), a vendor check that is high-risk, unverifiable or has adverse news, and the case where no supplier signs as agreed. Those are the cases where a person's answer changes the result. When the Planner is missing a field, the **Exceptions for a human** card shows one answer box per question. Each answer is read with that field's own parser, so an unreadable answer such as "soon" is asked again, not guessed. The same run then continues.
 
 ## The hostile test world
 
-The handbook says agents can't contact real people, so every supplier Bazaar negotiates with is a **fictional simulated agent with hidden instructions**, on the reserved `.example` domain ([sandbox.py](bazaar/sandbox.py)). The buyer agents only see what suppliers *say*. A test fails if any buyer-agent module touches supplier internals. Press **Reveal test world** in the UI to see the instructions.
+The handbook says agents can't contact real people, so every supplier Bazaar negotiates with is a **fictional simulated agent with hidden instructions**, on the reserved `.example` domain ([sandbox.py](bazaar/sandbox.py)). The same five personas are generated for every product category, with names, prices, capacity claims and lead times that fit it (Zestora Beverages Hub, Vantrix Technologies and so on). Below is the leather world for the example request. The buyer agents only see what suppliers *say*. A test fails if any buyer-agent module touches supplier internals. Press **Reveal test world** in the UI to see the instructions.
 
 | Supplier | Hidden instruction | Caught by | How |
 |---|---|---|---|
@@ -53,7 +59,7 @@ The handbook says agents can't contact real people, so every supplier Bazaar neg
 
 Real companies are used **only for discovery and verification** (with `CRUSTDATA_API_KEY` set). They appear in the UI as "reference only, never contacted". Bad behaviour comes only from the clearly fictional suppliers.
 
-**Real companies get the same checks as sandbox suppliers.** Crustdata Company Search finds Indian leather-goods makers. Company Enrich then supplies their status, current headcount, headcount six months ago (from the weekly timeseries) and HQ. The Verifier runs its own activity and capacity rules on that data, and each number is stored as a fact cited to `Crustdata /company/enrich`. Here is a live run for the example request:
+**Real companies get the same checks as sandbox suppliers.** Crustdata Company Search, with category terms and an off-category filter, finds Indian suppliers. (A plain search for "diet coke" returned coal-coke companies, which is why the filter exists.) Company Enrich then supplies their status, current headcount, headcount six months ago (from the weekly timeseries) and HQ. The Verifier runs its own activity and capacity rules on that data, and each number is stored as a fact cited to `Crustdata /company/enrich`. Here is a live run for the example request:
 
 | Real company (Crustdata) | Headcount now / 6 months ago | Verdict |
 |---|---|---|
@@ -61,7 +67,17 @@ Real companies are used **only for discovery and verification** (with `CRUSTDATA
 | Shri Exports, West Bengal | 21 / 20 | ACTIVE_TOO_SMALL: ≈1,764/month; its own description claims 15,000 bags/month |
 | Spirit Pole, Uttar Pradesh | 2 / 2 | ACTIVE_TOO_SMALL: ≈168/month |
 
-A company with no headcount on record is **UNVERIFIABLE**, not rejected and not passed. Caveat: Crustdata headcount counts people with professional profiles, which undercounts factory-floor workers, so on real companies the capacity model is conservative. Before anyone relied on it, it would need calibrating against known factory output.
+A company with no headcount on record is **UNVERIFIABLE**, not rejected and not passed. So is a record that doesn't list the queried domain as its own: Crustdata's top match for `superhouse.in` is "Design Edge Media", whose domain is `designedge.media`, so Bazaar refuses to use its numbers.
+
+**Vendor check, live results** (the Trust and compliance sample request):
+
+| Vendor given | Verdict | Why |
+|---|---|---|
+| Hindustan Coca-Cola Beverages, hccb.in | REAL AND TRADING | Founded 1997, about 8,000 people, CEO and CXOs on record, 13 web/news results, no adverse news |
+| Bisleri International, bisleri.com | REAL AND TRADING | One "adverse" story was about people selling *fake Bisleri*, so Bisleri is recorded as the victim, not the wrongdoer |
+| Mirza International, mirzaindia.com | CAUTION | The domain belongs to "Mirza Tanners Limited". The name lookup shows Mirza International's records sit on other domains, so confirm which legal entity will invoice. |
+| Superhouse Limited, superhouse.in | UNVERIFIABLE | Crustdata's record for the domain belongs to a different company. The name lookup found "Superhouse Leathers Limited" on the misspelled `superhourseleather.com`. A person must ask for registration papers. |
+| Zestora Leather Hub, zestora-leather.example (fictional) | HIGH RISK | No registry record, domain 19 days old, no web footprint | Caveat: Crustdata headcount counts people with professional profiles, which undercounts factory-floor workers, so on real companies the capacity model is conservative. Before anyone relied on it, it would need calibrating against known factory output.
 
 ## How to run it
 
@@ -71,7 +87,9 @@ No install: Python 3.10+ standard library only.
 python3 run.py serve                 # http://localhost:8000: live timeline, kill/restart, exceptions
 python3 run.py demo                  # same purchase, in the terminal
 python3 run.py demo --crash-at-payment   # kill right after the bank moves money, resume, prove it paid once
-python3 -m unittest discover -s tests -v # 17 tests
+python3 -m unittest discover -s tests -v # 22 tests
+python3 run.py demo "we need 12000 Diet cokes under a budget of 3.5 lakh"          # any product category
+python3 run.py demo "Here is a new vendor: Hindustan Coca-Cola Beverages, hccb.in. Is it real?"   # vendor check
 ```
 
 Optional keys (everything runs without them):
@@ -82,6 +100,7 @@ export CRUSTDATA_API_KEY=...    # real-company discovery (Company Search) and ve
 export ANTHROPIC_API_KEY=...    # Claude reads messy requests when the parser leaves a field empty
 export BAZAAR_PACE=0.35         # seconds per timeline event (the server's default, for a watchable demo)
 export BAZAAR_SETTLE_SECONDS=8  # the "waiting for settlement" window in which to press Kill
+export BAZAAR_SHIP_TO=Bengaluru BAZAAR_LEAD_DAYS=30  # buyer profile defaults
 ```
 
 ### The 2-minute demo
@@ -135,11 +154,11 @@ flowchart LR
 
 **What worked:** treating every outbound action (a message, a transfer, a ledger post) as keyed and idempotent made crash recovery almost free. Parsing the *signed text* instead of trusting the supplier's structured reply is what catches the late price change.
 
-**What didn't work at first:** checking the signed contract only against the budget. Ambrel's altered total (₹11.8 lakh) is under the ₹12 lakh budget, so it passed. Only a field-by-field diff against the *agreed* terms catches it. We also found that a killed child process becomes a zombie that still answers `kill(pid, 0)`, so the server reaps workers before deciding whether one is alive. Testing on requests we hadn't prepared exposed two more: the Negotiator sized its concessions from the budget, so the same deal under a ₹20 lakh budget cost ₹250/unit instead of ₹229. Now the concession path comes from the supplier's quote and the budget only caps it. And a request for cotton tote bags was "won" by a leather workshop, so suppliers now decline items outside their product line and the run goes to a human.
+**What didn't work at first:** checking the signed contract only against the budget. Ambrel's altered total (₹11.8 lakh) is under the ₹12 lakh budget, so it passed. Only a field-by-field diff against the *agreed* terms catches it. We also found that a killed child process becomes a zombie that still answers `kill(pid, 0)`, so the server reaps workers before deciding whether one is alive. Testing on requests we hadn't prepared exposed two more: the Negotiator sized its concessions from the budget, so the same deal under a ₹20 lakh budget cost ₹250/unit instead of ₹229. Now the concession path comes from the supplier's quote and the budget only caps it. A request for cotton tote bags was "won" by a leather workshop. Leather-only suppliers fixed the symptom, but "12000 Diet cokes" still failed, so the test world became generated per product category. The first vendor checks were also too strict: they rejected Mirza International over a renamed legal entity, and Bisleri over a story about counterfeiters. Both are honest businesses, and the theme asks for "no honest business turned away", so a name mismatch is now a caution, adverse news goes to a person, and counterfeiting victims are recognised.
 
 **Hardest case:** a kill *after* the bank has moved the money but *before* the ledger is written. The bank has paid and our books don't know it. The fix is that the bank honours the idempotency key, and the resumed step asks the bank first, finds the transfer, and only posts the missing ledger line.
 
-**How we tested it:** `tests/test_bazaar.py` has 17 tests. They cover the parser on four wordings of the same request, crore amounts and year rollover, missing fields going to a human, and a human's answers resuming the same run (an unreadable answer is asked again). They run the full purchase and assert every trap is caught. They make a **real subprocess crash** (exit 137) after the transfer, then resume and assert exactly 1 transfer, 1 ledger entry and no duplicate messages. They also cover a re-run being a no-op, bank idempotency conflicts, hash-chain tamper detection, approval of the fraud being refused, the same deal at the same price whatever the budget, an item no supplier makes going to a human, an order no supplier can verifiably deliver going to a human, the real-company verdicts on Crustdata-shaped records (including one with no record and one with no headcount), and a check that buyer agents never read supplier internals.
+**How we tested it:** `tests/test_bazaar.py` has 22 tests. They cover the parser on four wordings of the same request, crore amounts and year rollover, missing fields going to a human, and a human's answers resuming the same run (an unreadable answer is asked again). They run the full purchase and assert every trap is caught. They make a **real subprocess crash** (exit 137) after the transfer, then resume and assert exactly 1 transfer, 1 ledger entry and no duplicate messages. They also cover a re-run being a no-op, bank idempotency conflicts, hash-chain tamper detection, approval of the fraud being refused, the same deal at the same price whatever the budget, Diet Coke and laptops completing with every trap caught in their own category, a large advance waiting for a human and then paying once, the vendor check (request detection, fake and honest vendors, a counterfeiting victim, and a domain owned by a different company), an order no supplier can verifiably deliver going to a human, the real-company verdicts on Crustdata-shaped records (including one with no record and one with no headcount), and a check that buyer agents never read supplier internals.
 
 ## What we left out to ship in eight hours
 

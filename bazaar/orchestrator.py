@@ -8,6 +8,7 @@ from .crustdata import Crustdata
 from . import sandbox
 from .sandbox import Marketplace
 from .agents import auditor, contract as contract_agent, negotiator, payments, planner, risk, scout, verifier
+from .agents import vendor_check
 
 
 def mode():
@@ -47,6 +48,24 @@ def answer(run_id: str, answers: dict):
     return {"ok": True}
 
 
+def _run_vendor_check(store, run_id, request):
+    """Onboarding check on one vendor: no purchase, no money moves."""
+    rep = store.run_step("vendor_check", lambda: vendor_check.check_vendor(store, request))
+    ok, bad, n = db.verify_chain(run_id)
+    cited = all(c.get("fact_id") for c in rep["checks"])
+    store.emit("Auditor", "audit", f"Audit: {len(rep['checks'])} findings, every one stored as a fact with its source "
+               f"({'yes' if cited else 'NO'}); event log hash chain {'intact' if ok else f'broken at {bad}'} ({n} events)",
+               {"cited": cited, "chain_ok": ok})
+    if rep["verdict"] in ("HIGH_RISK", "UNVERIFIABLE") or rep.get("needs_review"):
+        store.raise_exception("vendor_review", f"Vendor {rep['verdict'].replace('_', ' ').lower()}: "
+                              f"{rep['vendor']['name'] or rep['vendor']['domain']}",
+                              {"vendor": rep["vendor"], "reasons": rep["reasons"],
+                               "recommended_action": rep["headline"]}, f"{run_id}:vendor_review")
+    db.set_run_status(run_id, "completed")
+    store.emit("System", "done", f"✅ Vendor check complete: {rep['verdict'].replace('_', ' ')} — {rep['headline']}.")
+    return "completed"
+
+
 def run(run_id: str):
     store = db.Store(run_id)
     r = db.get_run(run_id)
@@ -58,6 +77,9 @@ def run(run_id: str):
     else:
         store.emit("System", "start", f"Run {run_id} started. Crustdata: {mode()['crustdata']}. LLM: {mode()['llm']}.")
     db.set_run_status(run_id, "running")
+
+    if vendor_check.detect(r["request"]):
+        return _run_vendor_check(store, run_id, r["request"])
 
     spec = store.run_step("plan", lambda: planner.plan(store, r["request"]))
     if spec["status"] != "ok":

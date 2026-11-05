@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import config, db, orchestrator
 from .agents import payments
+from . import sandbox
 from .sandbox import Marketplace
 
 WORKERS = {}  # run_id -> Popen
@@ -102,7 +103,13 @@ class Handler(BaseHTTPRequestHandler):
         elif parts == ["api", "runs"]:
             self._json({"runs": db.list_runs(), "mode": orchestrator.mode()})
         elif parts == ["api", "testworld"]:
-            self._json({"suppliers": Marketplace.reveal()})
+            run = parse_qs(u.query).get("run", [None])[0]
+            spec = db.Store(run).step_done("plan") if run else None
+            if spec and spec.get("status") == "ok":
+                ref, _ = sandbox.reference_price(spec)
+                self._json({"suppliers": Marketplace.reveal(spec.get("category", "leather_goods"), ref)})
+            else:
+                self._json({"suppliers": Marketplace.reveal()})
         elif len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "state":
             after = int(parse_qs(u.query).get("after", ["0"])[0])
             s = state(parts[2], after)

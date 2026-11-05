@@ -257,6 +257,60 @@ class RealCompanyChecks(Fresh):
         self.assertTrue(all(f["source"].startswith(("Crustdata", "Verifier")) for f in store.facts()))
 
 
+class VendorCheck(Fresh):
+    THEME = ("Here is a new vendor's name and website: {}, {}. Tell me whether it is a real, trading business: "
+             "who runs it, how long it has existed, and anything that looks off.")
+
+    def test_detects_vendor_requests_only(self):
+        from bazaar.agents import vendor_check
+        self.assertEqual(vendor_check.detect(self.THEME.format("Superhouse Limited", "superhouse.in")),
+                         {"name": "Superhouse Limited", "domain": "superhouse.in"})
+        self.assertEqual(vendor_check.detect("Vendor name is Mirza International, website https://www.mirzaindia.com"),
+                         {"name": "Mirza International", "domain": "mirzaindia.com"})
+        self.assertIsNone(vendor_check.detect(EXAMPLE))
+        self.assertIsNone(vendor_check.detect("we need 12000 Diet cokes under a budget of 3.5 lakh"))
+
+    def test_fake_and_honest_sandbox_vendors(self):
+        rid, status = self.run_purchase(self.THEME.format("Zestora Leather Hub", "zestora-leather.example"))
+        self.assertEqual(status, "completed")
+        out = db.Store(rid).step_done("vendor_check")
+        self.assertEqual(out["verdict"], "HIGH_RISK")
+        self.assertEqual(db.Store(rid).exceptions()[0]["kind"], "vendor_review")
+        rid, _ = self.run_purchase(self.THEME.format("Sarvaka Leather Co.", "sarvaka-leather.example"))
+        out = db.Store(rid).step_done("vendor_check")
+        self.assertEqual(out["verdict"], "REAL_AND_TRADING")
+        self.assertEqual(out["profile"]["people"][0]["name"], "Meera Iyer")
+        self.assertTrue(all(c["fact_id"] for c in out["checks"]))
+        self.assertEqual(db.conn().execute("SELECT COUNT(*) n FROM bank_transfers").fetchone()["n"], 0)
+
+    def test_real_vendor_rules_on_crustdata_shaped_data(self):
+        from bazaar import crustdata
+        from bazaar.agents import vendor_check
+        rec = {"_domain_match": True, "_confidence": 1.0, "crustdata_company_id": 7,
+               "basic_info": {"name": "Bisleri International Pvt Ltd", "status": "active", "year_founded": 1969},
+               "headcount": {"total": 4889, "timeseries": [{"date": "2026-04-01", "employee_count": 4712}]},
+               "people": {"cxos": [{"basic_profile": {"name": "Angelo George", "current_title": "CEO"}}]}}
+        news = [{"title": "2 apprehended for selling fake Bisleri water bottles", "url": "https://x.example/a"},
+                {"title": "Bisleri International Pvt Ltd expands plant", "url": "https://x.example/b"}]
+        saved = (crustdata.Crustdata.enrich_domain, crustdata.Crustdata.web_search, crustdata.Crustdata.live,
+                 crustdata.Crustdata.identify)
+        crustdata.Crustdata.enrich_domain = lambda self, d, fields=None: dict(rec) if d == "bisleri.com" else (
+            {"_domain_match": False, "basic_info": {"name": "Design Edge Media"}})
+        crustdata.Crustdata.web_search = lambda self, q, sources=None, location=None: news
+        crustdata.Crustdata.identify = lambda self, name=None, domain=None: []
+        crustdata.Crustdata.live = property(lambda self: True)
+        try:
+            store = db.Store(db.create_run("x", {}))
+            ok = vendor_check.check_vendor(store, self.THEME.format("Bisleri International", "bisleri.com"))
+            other = vendor_check.check_vendor(store, self.THEME.format("Superhouse Limited", "superhouse.in"))
+        finally:
+            (crustdata.Crustdata.enrich_domain, crustdata.Crustdata.web_search, crustdata.Crustdata.live,
+             crustdata.Crustdata.identify) = saved
+        self.assertEqual(ok["verdict"], "REAL_AND_TRADING")  # counterfeiting victim is not adverse news
+        self.assertEqual(ok["profile"]["people"][0]["name"], "Angelo George")
+        self.assertEqual(other["verdict"], "UNVERIFIABLE")  # record belongs to a different company
+
+
 class BankTests(Fresh):
     def test_idempotency(self):
         t1, c1 = bank.transfer("K1", 100, "60300055667788", "SBXB0000721", "x", "PO-1")
