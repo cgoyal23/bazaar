@@ -257,6 +257,52 @@ class RealCompanyChecks(Fresh):
         self.assertTrue(all(f["source"].startswith(("Crustdata", "Verifier")) for f in store.facts()))
 
 
+class WaysForward(Fresh):
+    REQ = "I want 200 cokes under rs 4000 by 10 november"
+
+    def options(self, rid):
+        return {o["id"]: o for e in db.Store(rid).exceptions() if e["status"] == "open"
+                for o in json.loads(e["detail"]).get("options", [])}
+
+    def test_too_soon_and_too_cheap_gets_options_that_finish(self):
+        rid, status = self.run_purchase(self.REQ)
+        self.assertEqual(status, "needs_human")
+        opts = self.options(rid)
+        self.assertEqual(opts["deadline"]["answers"], {"deadline": "2026-11-12"})  # earliest verified delivery 11 Nov
+        self.assertEqual(set(opts["deadline_budget"]["answers"]), {"deadline", "budget"})
+        # combined fix finishes in one step, within the new budget
+        out = orchestrator.revise(rid, opts["deadline_budget"]["answers"], opts["deadline_budget"]["label"])
+        self.assertTrue(out["ok"])
+        self.assertEqual(db.get_run(rid)["status"], "revised")
+        self.assertEqual(orchestrator.run(out["run_id"]), "completed")
+        c = db.Store(out["run_id"]).step_done("contract")
+        self.assertLessEqual(c["terms"]["total_paise"], int(opts["deadline_budget"]["answers"]["budget"]) * 100)
+        self.assertFalse(orchestrator.revise(rid, {"budget": "1"}, "again")["ok"])  # a revised run is closed
+
+    def test_date_only_then_budget_or_fewer_units(self):
+        rid, _ = self.run_purchase(self.REQ)
+        o = self.options(rid)["deadline"]
+        child = orchestrator.revise(rid, o["answers"], o["label"])["run_id"]
+        self.assertEqual(orchestrator.run(child), "needs_human")  # the budget still blocks every deal
+        opts = self.options(child)
+        self.assertEqual(opts["budget"]["answers"], {"budget": "5600"})  # 200 × lowest real offer ₹28
+        self.assertEqual(opts["qty"]["answers"], {"item": "142 coke"})  # what ₹4,000 buys at ₹28
+        g = orchestrator.revise(child, opts["qty"]["answers"], opts["qty"]["label"])["run_id"]
+        self.assertEqual(orchestrator.run(g), "completed")
+        terms = db.Store(g).step_done("contract")["terms"]
+        self.assertEqual((terms["quantity"], terms["total_paise"]), (142, 142 * 28 * 100))
+        self.assertEqual(db.Store(g).step_done("plan")["deadline"], "2026-11-12")  # earlier answers carry over
+
+    def test_fakes_are_never_a_way_forward(self):
+        from bazaar.agents import advisor
+        rid, _ = self.run_purchase(self.REQ)
+        s = db.Store(rid)
+        names = " ".join(o["why"] for o in self.options(rid).values())
+        self.assertNotIn("Zestora", names)
+        self.assertNotIn("Vantrix", names)  # misrepresented capacity is not a timing problem
+        self.assertIsInstance(advisor.after_verification(s, s.step_done("plan"), s.step_done("verify")), list)
+
+
 class VendorCheck(Fresh):
     THEME = ("Here is a new vendor's name and website: {}, {}. Tell me whether it is a real, trading business: "
              "who runs it, how long it has existed, and anything that looks off.")

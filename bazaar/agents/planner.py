@@ -325,9 +325,13 @@ def plan(store, request: str):
         return spec
 
     dl = datetime.date.fromisoformat(spec["deadline"])
-    latest = dl - datetime.timedelta(days=config.POLICY["delivery_buffer_days"])
+    # Safety buffer before the deadline: 3 days normally, shorter for urgent orders
+    # (a quarter of the time available), so a 4-day order is not impossible by construction.
+    buffer = min(config.POLICY["delivery_buffer_days"], max(0, (dl - today).days // 4))
+    latest = dl - datetime.timedelta(days=buffer)
     spec.update({
         "latest_acceptable_delivery": latest.isoformat(),
+        "buffer_days": buffer,
         "target_delivery": (dl - datetime.timedelta(days=10)).isoformat(),
         "specification": {
             "item": spec["item"], "quantity": spec["quantity"],
@@ -338,7 +342,7 @@ def plan(store, request: str):
                         "Inspection on arrival at AQL 2.5"],
         },
         "assumptions": defaults + [f"Advance capped at {config.POLICY['max_advance_pct']}% by policy",
-                        f"Delivery must land by {latest} ({config.POLICY['delivery_buffer_days']}-day buffer)"],
+                        f"Delivery must land by {latest} ({buffer}-day buffer)"],
         "tasks": [
             {"agent": "Scout", "task": "Find suppliers: RFQ to the sandbox marketplace + Crustdata discovery"},
             {"agent": "Verifier", "task": "Prove each supplier is real, active and has the capacity"},

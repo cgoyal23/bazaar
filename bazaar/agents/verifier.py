@@ -89,7 +89,11 @@ def verify_one(store, spec, cand, registry: SandboxRegistry):
         ratio = claimed / max(evidence_cap, 1)
         # A claim far beyond the evidence is a misrepresentation even if the order is small.
         cap_ok = evidence_cap >= need_month and ratio <= p["capacity_claim_tolerance"]
-        detail = (f"Needs ≈{need_month:,}/month ({spec['quantity']:,} units in {prod_days} production days). "
+        needs = (f"Needs ≈{need_month:,}/month ({spec['quantity']:,} units in {prod_days} production days). "
+                 if prod_days > 0 else
+                 f"No time to produce: delivery must land by {latest}, and {transit} day(s) of transit plus "
+                 f"{p['qc_days']} days of QC from {rec['hq_city']} leave no production days. ")
+        detail = (needs +
                   f"Evidence supports ≈{evidence_cap:,}/month ({rec['headcount']} staff × "
                   f"{p['production_share_of_headcount']:.0%} × {upw:,}/worker/month for {catalog.get(spec.get('category'))['label']}). "
                   f"Claimed {claimed:,}/month")

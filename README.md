@@ -40,6 +40,15 @@ PO-xxxx-02 countersigned with Sarvaka Leather Co. — 5,000 × ₹229 = ₹11,45
 
 **Any product, not only leather.** [catalog.py](bazaar/catalog.py) holds product categories (leather goods, beverages, packaged food, IT hardware, furniture, stationery, apparel, plus a general fallback). Each has price-book benchmarks for common items, a capacity model and Crustdata search terms. "We need 12000 Diet cokes under a budget of 3.5 lakh" is beverages at a ₹34 benchmark. It completes end to end: Ambrel's ₹27 → ₹30 contract switch is caught, Sarvaka Beverages signs at ₹29 × 12,000 = ₹3,48,000, and the lookalike `sarvaka-beverag3s.example` fraud is held.
 
+**When a run gets stuck, it offers ways forward.** A **Recovery advisor** ([advisor.py](bazaar/agents/advisor.py)) reads the evidence the run already gathered and turns it into concrete revisions, each one a button. It looks at verified capacity, transit times, the prices suppliers actually offered, and why each deal was blocked. Example: "I want 200 cokes under rs 4000 by 10 november".
+
+| Stops at | Options it offers (computed, not guessed) |
+|---|---|
+| Verification: nobody can deliver by 10 Nov | **Move the deadline to 12 Nov** (Sarvaka passed every check but time; earliest verified delivery 11 Nov) · **Move the deadline to 12 Nov and raise the budget to ₹6,800**, because ₹20/unit is also below every quote and changing only the date would stop again at negotiation |
+| Negotiation, after taking only the new date | **Raise the budget to ₹5,600** (200 × ₹28, the lowest real offer) · **Buy 142 units within ₹4,000** |
+
+Every option finishes: 200 cokes for ₹6,000, 200 for ₹5,600, or 142 for ₹3,976. Choosing one starts a **revised run** linked to the old one. That keeps the outbox, POs and ledger of each attempt separate, and every limit is enforced again in code. Options only ever change the buyer's own request. They never relax policy, and fakes or suppliers that misrepresented capacity are never offered as a way forward. A "change something else" form covers anything the advisor didn't think of.
+
 **Buyer profile.** A request that omits the delivery city or the deadline uses the buyer's ship-to city (Bengaluru) and a standard 30-day lead time. These are shown as assumptions on the plan, never silently.
 
 **Where a human is still needed:** missing request fields, a bank-detail change, payments above the auto-pay limit (₹5 lakh: press **Approve payment** and the run resumes and pays once through the same idempotency key), a vendor check that is high-risk, unverifiable or has adverse news, and the case where no supplier signs as agreed. Those are the cases where a person's answer changes the result. When the Planner is missing a field, the **Exceptions for a human** card shows one answer box per question. Each answer is read with that field's own parser, so an unreadable answer such as "soon" is asked again, not guessed. The same run then continues.
@@ -87,7 +96,7 @@ No install: Python 3.10+ standard library only.
 python3 run.py serve                 # http://localhost:8000: live timeline, kill/restart, exceptions
 python3 run.py demo                  # same purchase, in the terminal
 python3 run.py demo --crash-at-payment   # kill right after the bank moves money, resume, prove it paid once
-python3 -m unittest discover -s tests -v # 22 tests
+python3 -m unittest discover -s tests -v # 25 tests
 python3 run.py demo "we need 12000 Diet cokes under a budget of 3.5 lakh"          # any product category
 python3 run.py demo "Here is a new vendor: Hindustan Coca-Cola Beverages, hccb.in. Is it real?"   # vendor check
 ```
@@ -158,7 +167,7 @@ flowchart LR
 
 **Hardest case:** a kill *after* the bank has moved the money but *before* the ledger is written. The bank has paid and our books don't know it. The fix is that the bank honours the idempotency key, and the resumed step asks the bank first, finds the transfer, and only posts the missing ledger line.
 
-**How we tested it:** `tests/test_bazaar.py` has 22 tests. They cover the parser on four wordings of the same request, crore amounts and year rollover, missing fields going to a human, and a human's answers resuming the same run (an unreadable answer is asked again). They run the full purchase and assert every trap is caught. They make a **real subprocess crash** (exit 137) after the transfer, then resume and assert exactly 1 transfer, 1 ledger entry and no duplicate messages. They also cover a re-run being a no-op, bank idempotency conflicts, hash-chain tamper detection, approval of the fraud being refused, the same deal at the same price whatever the budget, Diet Coke and laptops completing with every trap caught in their own category, a large advance waiting for a human and then paying once, the vendor check (request detection, fake and honest vendors, a counterfeiting victim, and a domain owned by a different company), an order no supplier can verifiably deliver going to a human, the real-company verdicts on Crustdata-shaped records (including one with no record and one with no headcount), and a check that buyer agents never read supplier internals.
+**How we tested it:** `tests/test_bazaar.py` has 25 tests. They cover the parser on four wordings of the same request, crore amounts and year rollover, missing fields going to a human, and a human's answers resuming the same run (an unreadable answer is asked again). They run the full purchase and assert every trap is caught. They make a **real subprocess crash** (exit 137) after the transfer, then resume and assert exactly 1 transfer, 1 ledger entry and no duplicate messages. They also cover a re-run being a no-op, bank idempotency conflicts, hash-chain tamper detection, approval of the fraud being refused, the same deal at the same price whatever the budget, Diet Coke and laptops completing with every trap caught in their own category, a large advance waiting for a human and then paying once, the ways-forward options for "200 cokes under ₹4,000 by 10 November" each finishing (with earlier answers carried into the revision, and fakes never offered), the vendor check (request detection, fake and honest vendors, a counterfeiting victim, and a domain owned by a different company), an order no supplier can verifiably deliver going to a human, the real-company verdicts on Crustdata-shaped records (including one with no record and one with no headcount), and a check that buyer agents never read supplier internals.
 
 ## What we left out to ship in eight hours
 

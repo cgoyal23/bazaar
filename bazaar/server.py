@@ -138,6 +138,21 @@ class Handler(BaseHTTPRequestHandler):
             if out["ok"]:
                 spawn(parts[2])
             self._json(out, 200 if out["ok"] else 400)
+        elif len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "revise":
+            if alive(parts[2]):
+                return self._json({"ok": False, "message": "worker is still running"}, 409)
+            if body.get("option"):
+                opt = orchestrator.option(parts[2], body["option"])
+                if not opt:
+                    return self._json({"ok": False, "message": "no such option"}, 404)
+                out = orchestrator.revise(parts[2], opt["answers"], opt["label"])
+            else:
+                answers = body.get("answers") or {}
+                out = orchestrator.revise(parts[2], answers, "Changed by hand: " + "; ".join(
+                    f"{k} = {v}" for k, v in answers.items() if str(v).strip()))
+            if out["ok"]:
+                spawn(out["run_id"])
+            self._json(out, 200 if out["ok"] else 400)
         elif len(parts) == 4 and parts[:2] == ["api", "exceptions"] and parts[3] == "resolve":
             out = payments.resolve_exception(int(parts[2]), body.get("action", ""))
             if out.get("resume"):

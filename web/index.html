@@ -91,6 +91,8 @@ pre{font:12px/1.5 var(--mono);background:#fbfaf7;border:1px solid var(--line);bo
 .kv div:nth-child(odd){color:var(--muted)}
 .empty{color:var(--muted);font-size:13px;font-style:italic}
 [hidden]{display:none!important}
+.ways{margin-top:10px;padding-top:8px;border-top:1px dashed var(--line)}
+.way{margin:8px 0}.way button{margin-bottom:3px}
 .answers label{display:block;font-size:13px;margin:8px 0 0}
 .answers input{display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;background:var(--panel);color:inherit}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:20;padding:16px}
@@ -166,7 +168,7 @@ const AGENTS = [
   ["Negotiator","negotiate","#b35c00","#fff4e6"],["Risk Officer","risk_review","#c92a2a","#fff5f5"],
   ["Contract","contract","#2b8a3e","#ebfbee"],["Payments","payment_advance","#364fc7","#edf2ff"],["Auditor","audit","#495057","#f1f3f5"]];
 const COLORS = Object.fromEntries(AGENTS.map(a=>[a[0],[a[2],a[3]]]));
-COLORS["System"]=["#212529","#e9ecef"]; COLORS["Human"]=["#862e9c","#f8f0fc"];
+COLORS["System"]=["#212529","#e9ecef"]; COLORS["Advisor"]=["#0c8599","#e3fafc"]; COLORS["Human"]=["#862e9c","#f8f0fc"];
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const inr = p => p==null ? "—" : "₹" + (p/100).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -190,8 +192,12 @@ $("reveal").onclick = async () => {
 };
 $("modal").onclick = e => { if (e.target.id==="modal") $("modal").hidden = true; };
 
+const PANELS = ["exceptions","plan","suppliers","negos","contract","payments","audit"];
+const BLANK = Object.fromEntries(PANELS.map(id=>[id,[$(id).innerHTML,$(id).className]]));
 function start(id){
-  runId = id; lastId = 0; events = []; $("timeline").innerHTML = "";
+  runId = id; lastId = 0; events = []; excSig = ""; $("timeline").innerHTML = "";
+  PANELS.forEach(p=>{ $(p).innerHTML = BLANK[p][0]; $(p).className = BLANK[p][1]; });
+  $("outcome").hidden = true; $("excCount").textContent = "0";
   ["bar","pipeline","grid"].forEach(x=>$(x).hidden=false);
   history.replaceState(null,"","#"+id);
   clearInterval(timer); poll(); timer = setInterval(poll, 700);
@@ -220,7 +226,7 @@ function render(s){
   $("status").className = "pill " + st; $("status").textContent = st;
   $("dot").className = "dot" + (s.alive ? " on" : "");
   $("workerTxt").textContent = s.alive ? "worker running" : "worker stopped";
-  $("runId").textContent = "run " + s.run.id;
+  $("runId").innerHTML = "run " + esc(s.run.id) + (s.mode.revision_of ? ` · revision of <a href="#${esc(s.mode.revision_of)}" onclick="start('${esc(s.mode.revision_of)}')">${esc(s.mode.revision_of)}</a> (${esc(s.mode.revision)})` : "");
   $("chain").textContent = (s.chain.ok ? "🔗 hash chain intact" : "⚠️ hash chain broken") + ` · ${s.chain.events} events`;
   $("kill").disabled = !s.alive; $("resume").disabled = s.alive || st==="completed";
   const lastPay = [...events].reverse().find(e=>e.agent==="Payments");
@@ -326,6 +332,7 @@ function renderExceptions(s){
     return `<div class="exc ${x.status}"><b>#${x.id} ${esc(x.title)}</b> <span class="badge ${x.status==="open"?"b-bad":x.status==="rejected"?"b-warn":"b-ok"}">${x.status}</span>
       ${x.detail.invoice?`<div class="small">From ${esc(x.detail.invoice.from_email)}: “${esc(x.detail.invoice.text)}”</div>`:""}
       ${failed.length?`<ul class="checks">${failed.map(c=>`<li><span>⛔</span><span>${esc(c.detail)}</span></li>`).join("")}</ul>`:""}
+      ${x.status==="open" && STOPPED.includes(x.kind) ? waysForward(x, s) : ""}
       ${x.kind==="needs_input" && x.status==="open" && x.detail.ask ? answerForm(x, s) :
         x.detail.questions?`<ul>${x.detail.questions.map(q=>`<li>${esc(q)}</li>`).join("")}</ul>`:""}
       ${x.kind==="vendor_review" && x.detail.reasons?`<ul class="checks">${x.detail.reasons.map(r=>`<li><span>•</span><span>${esc(r)}</span></li>`).join("")}</ul>`:""}
@@ -335,6 +342,36 @@ function renderExceptions(s){
       ${x.status==="open" && x.kind==="bank_change" ? `<div class="acts"><button class="danger" onclick="resolveExc(${x.id},'reject')">Reject as fraud</button><button onclick="resolveExc(${x.id},'approve')">Approve bank change & pay</button></div>`:""}</div>`;
   }).join("");
 }
+const STOPPED = ["no_verified_supplier","no_deal","no_contract","no_supplier"];
+function waysForward(x, s){
+  const opts = x.detail.options || [];
+  const p = s.outputs.plan || {};
+  const cur = {item: p.quantity ? `${p.quantity} ${p.item}` : "", city: p.delivery_city||"", deadline: p.deadline||"",
+               budget: p.budget_paise ? String(p.budget_paise/100) : ""};
+  return `<div class="ways"><b>Ways forward</b> <span class="small">— worked out from this run's evidence; each starts a revised run with every check enforced again</span>
+    ${opts.length ? opts.map(o=>`<div class="way"><button class="primary" ${s.alive?"disabled":""} onclick="revise('${esc(o.id)}')">${esc(o.label)} →</button><div class="small">${esc(o.why)}</div></div>`).join("")
+      : `<div class="small">No automatic fix: every supplier failed a check a revision cannot change. Adjust the request below.</div>`}
+    <details ${opts.length?"":"open"}><summary class="small">Change something else and re-run</summary>
+    <form class="answers" onsubmit="reviseByHand(event)">
+      <label>What and how many<input name="item" placeholder="now: ${esc(cur.item)}" autocomplete="off"></label>
+      <label>Deliver to<input name="city" placeholder="now: ${esc(cur.city)}" autocomplete="off"></label>
+      <label>Deadline<input name="deadline" placeholder="now: ${esc(cur.deadline)}" autocomplete="off"></label>
+      <label>Total budget (₹)<input name="budget" placeholder="now: ${esc(cur.budget)}" autocomplete="off"></label>
+      <div class="acts"><button type="submit" ${s.alive?"disabled":""}>Re-run with these changes →</button><span class="small" id="reviseMsg"></span></div>
+    </form></details></div>`;
+}
+async function revise(option){
+  const r = await fetch(`/api/runs/${runId}/revise`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({option})}).then(r=>r.json());
+  if (r.ok) start(r.run_id); else alert(r.message);
+}
+async function reviseByHand(ev){
+  ev.preventDefault();
+  const answers = Object.fromEntries([...new FormData(ev.target)].filter(([k,v])=>v.trim()));
+  if (!Object.keys(answers).length){ $("reviseMsg").textContent = "Change at least one field."; return; }
+  const r = await fetch(`/api/runs/${runId}/revise`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({answers})}).then(r=>r.json());
+  if (r.ok) start(r.run_id); else $("reviseMsg").textContent = r.message;
+}
+
 function answerForm(x, s){
   return `<form class="answers" onsubmit="sendAnswers(event)">
     ${x.detail.ask.map(a=>`<label>${esc(a.question)}<input name="${esc(a.field)}" placeholder="e.g. ${esc(a.example)}" autocomplete="off"></label>`).join("")}

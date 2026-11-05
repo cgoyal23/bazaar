@@ -1,6 +1,7 @@
 """The procurement workflow. Each stage is a durable step: a finished step is
 never run again, so a killed run resumes exactly where it stopped."""
 import datetime
+import json
 import os
 
 from . import config, db, llm
@@ -8,12 +9,57 @@ from .crustdata import Crustdata
 from . import sandbox
 from .sandbox import Marketplace
 from .agents import auditor, contract as contract_agent, negotiator, payments, planner, risk, scout, verifier
-from .agents import vendor_check
+from .agents import advisor, vendor_check
 
 
 def mode():
     return {"crustdata": "live" if Crustdata().live else "offline (sandbox registry)",
             "llm": f"Claude ({llm.MODEL})" if llm.available() else "off (deterministic parser)"}
+
+
+def _advise(store, run_id, kind, compute):
+    """Work out ways forward once (a durable step), and attach them to the exception."""
+    def step():
+        options = compute()
+        advisor.offer(store, run_id, kind, options)
+        return options
+    store.run_step(f"advice:{kind}", step)
+
+
+def option(run_id: str, option_id: str):
+    """Look up a way forward the advisor offered on this run."""
+    for e in db.Store(run_id).exceptions():
+        for o in json.loads(e["detail"] or "{}").get("options", []):
+            if o["id"] == option_id:
+                return o
+    return None
+
+
+def revise(run_id: str, answers: dict, label: str):
+    """Start a revised run from a stopped one: same request, plus the human's chosen
+    changes as Planner answers. A new run keeps the outbox, POs and ledger of each
+    attempt separate; the old run records which revision replaced it."""
+    parent = db.get_run(run_id)
+    if not parent:
+        return {"ok": False, "message": "no such run"}
+    if parent["status"] not in ("needs_human", "needs_input", "failed"):
+        return {"ok": False, "message": f"run is {parent['status']}; only a stopped run can be revised"}
+    clean = {k: str(v).strip()[:300] for k, v in (answers or {}).items() if k in planner.ASK and str(v).strip()}
+    if not clean:
+        return {"ok": False, "message": "no changes given"}
+    store = db.Store(run_id)
+    merged = {**store.answers(), **clean}
+    child = db.create_run(parent["request"], {**mode(), "revision_of": run_id, "revision": label})
+    db.Store(child).set_answers(merged)
+    db.conn().execute("UPDATE exceptions SET status='resolved', resolution=?, resolved_at=? "
+                      "WHERE run_id=? AND status='open' AND kind IN "
+                      "('no_verified_supplier','no_deal','no_contract','no_supplier','needs_input')",
+                      (f"Revised as run {child}: {label}", db.now(), run_id))
+    store.emit("Human", "revise", f"Chose a way forward: {label} → revised run {child}", {"child": child,
+                                                                                          "answers": clean},
+               pace=False)
+    db.set_run_status(run_id, "revised")
+    return {"ok": True, "run_id": child}
 
 
 def _hand_over(store, run_id, kind, title, detail):
@@ -76,6 +122,10 @@ def run(run_id: str):
                    f"{len(top)} stage(s) already done: {', '.join(top) or 'none'}.", {"done": done})
     else:
         store.emit("System", "start", f"Run {run_id} started. Crustdata: {mode()['crustdata']}. LLM: {mode()['llm']}.")
+        m = json.loads(r.get("mode") or "{}")
+        if m.get("revision_of"):
+            store.emit("System", "revision", f"Revision of run {m['revision_of']}: {m.get('revision')}. "
+                       f"Changes: " + "; ".join(f"{k} = {v}" for k, v in store.answers().items()), {"parent": m["revision_of"]})
     db.set_run_status(run_id, "running")
 
     if vendor_check.detect(r["request"]):
@@ -99,10 +149,12 @@ def run(run_id: str):
                           {"declines": scouted.get("declines", [])})
     verified = store.run_step("verify", lambda: verifier.verify(store, spec, scouted))
     if not any(v["verdict"] == "PASS" for v in verified["results"]):
-        return _hand_over(store, run_id, "no_verified_supplier",
-                          "No supplier passed verification",
-                          {"results": [{"supplier": v["supplier"], "verdict": v["verdict"], "reasons": v["reasons"]}
-                                       for v in verified["results"]]})
+        out = _hand_over(store, run_id, "no_verified_supplier",
+                         "No supplier passed verification",
+                         {"results": [{"supplier": v["supplier"], "verdict": v["verdict"], "reasons": v["reasons"]}
+                                      for v in verified["results"]]})
+        _advise(store, run_id, "no_verified_supplier", lambda: advisor.after_verification(store, spec, verified))
+        return out
     negotiated = store.run_step("negotiate", lambda: negotiator.negotiate(store, market, spec, verified))
     reviewed = store.run_step("risk_review", lambda: risk.review(store, spec, verified, negotiated))
     if not reviewed["ranked"]:
@@ -110,10 +162,13 @@ def run(run_id: str):
                               {"reviews": reviewed["reviews"]}, f"{run_id}:no_deal")
         store.emit("System", "exception", "No approved deal — handed to a human with every reason attached")
         db.set_run_status(run_id, "needs_human")
+        _advise(store, run_id, "no_deal", lambda: advisor.after_negotiation(store, spec, negotiated, reviewed))
         return "needs_human"
     signed = store.run_step("contract", lambda: contract_agent.contract(store, market, spec, verified, negotiated, reviewed))
     if signed["status"] != "signed":
         db.set_run_status(run_id, "needs_human")
+        _advise(store, run_id, "no_contract", lambda: advisor.after_negotiation(
+            store, spec, negotiated, reviewed, voided=[v["supplier"] for v in signed.get("voided", [])]))
         return "needs_human"
     paid = store.run_step("payment_advance", lambda: payments.pay_advance(store, market, signed))
     inbox = store.run_step("inbox_watch", lambda: payments.watch_inbox(store, market, signed)) \
