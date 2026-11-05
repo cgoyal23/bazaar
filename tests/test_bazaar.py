@@ -236,18 +236,23 @@ class RealCompanyChecks(Fresh):
                              "headcount": {"total": 100, "timeseries": [{"date": "2026-04-01", "employee_count": 400}]}},
             "blank.in": {"basic_info": {"status": "active"}},
         }
+        for r in records.values():
+            r["_domain_match"] = True
+        records["wrong.in"] = {"basic_info": {"name": "Some Media Co", "status": "active"}, "headcount": {"total": 400},
+                               "_domain_match": False}
         orig = crustdata.Crustdata.enrich_domain
         crustdata.Crustdata.enrich_domain = lambda self, d: records.get(d)
         try:
             run_id = db.create_run(EXAMPLE, {})
             store = db.Store(run_id)
             spec = {"quantity": 5000, "delivery_city": "Bengaluru", "latest_acceptable_delivery": "2026-12-12"}
-            out = verifier.verify_real(store, [{"name": d, "domain": d} for d in [*records, "none.in"]], spec, limit=5)
+            out = verifier.verify_real(store, [{"name": d, "domain": d} for d in [*records, "none.in"]], spec, limit=6)
         finally:
             crustdata.Crustdata.enrich_domain = orig
         v = {r["domain"]: r["verdict"] for r in out}
         self.assertEqual(v, {"big.in": "ACTIVE_CAN_SUPPLY", "tiny.in": "ACTIVE_TOO_SMALL",
-                             "shrinking.in": "NOT_SUITABLE", "blank.in": "UNVERIFIABLE", "none.in": "NO_RECORD"})
+                             "shrinking.in": "NOT_SUITABLE", "blank.in": "UNVERIFIABLE", "wrong.in": "UNVERIFIABLE",
+                             "none.in": "NO_RECORD"})
         self.assertEqual(out[0]["headquarters"], "Uttar Pradesh, India")
         self.assertTrue(all(f["source"].startswith(("Crustdata", "Verifier")) for f in store.facts()))
 

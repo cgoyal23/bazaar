@@ -6,7 +6,7 @@
    handbook keeps agents in the room.
 3. Resolve entities: two bids from the same company under two names become one record.
 """
-from .. import config
+from .. import catalog, config
 from ..crustdata import Crustdata, CrustdataError, dig
 
 
@@ -56,22 +56,35 @@ def scout(store, spec, market):
     real = []
     cd = Crustdata(on_event=lambda kind, msg: store.emit("Scout", kind, msg))
     if cd.live:
-        query = f"{spec['item']} manufacturer exporter"
-        store.emit("Scout", "crustdata", f"Crustdata Company Search (India): “{query}”")
+        cat = spec.get("category") or "general"
+        query = catalog.search_query(cat, spec["item"])
+        store.emit("Scout", "crustdata", f"Crustdata Company Search (India, {catalog.get(cat)['label']}): “{query}”")
         try:
-            for co in cd.search_companies(query, "IND", 6):
+            dropped = []
+            for co in cd.search_companies(query, "IND", 10):
                 name = dig(co, "basic_info.name")
                 domain = dig(co, "basic_info.primary_domain")
+                desc = dig(co, "basic_info.description") or ""
                 if not name:
+                    continue
+                if not catalog.matches_category(cat, f"{name} {desc}"):
+                    dropped.append(name)
+                    continue
+                if len(real) >= 6:
                     continue
                 real.append({"crustdata_company_id": co.get("crustdata_company_id"), "name": name,
                              "domain": domain, "year_founded": dig(co, "basic_info.year_founded"),
                              "headcount": dig(co, "headcount.total"),
                              "headquarters": dig(co, "locations.headquarters"),
-                             "description": (dig(co, "basic_info.description") or "")[:200]})
+                             "description": desc[:200]})
+            if dropped:
+                store.emit("Scout", "crustdata",
+                           f"Dropped {len(dropped)} search result(s) whose description is not about "
+                           f"{catalog.get(cat)['label']}: {', '.join(dropped[:5])}",
+                           {"dropped": dropped})
             store.emit("Scout", "crustdata",
-                       f"Crustdata returned {len(real)} real Indian companies. Used for market discovery and "
-                       "verification only — not contacted (handbook: agents stay in the room).",
+                       f"Crustdata returned {len(real)} real Indian companies in {catalog.get(cat)['label']}. Used for "
+                       "market discovery and verification only — not contacted (handbook: agents stay in the room).",
                        {"companies": real})
         except CrustdataError as e:
             store.emit("Scout", "tool_error", f"Crustdata search failed: {e}. Continuing with marketplace bids only.")

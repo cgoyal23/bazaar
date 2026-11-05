@@ -82,7 +82,7 @@ class Crustdata:
                 time.sleep(wait)
         raise CrustdataError(f"{path}: gave up after {retries} retries ({last})")
 
-    def search_companies(self, query: str, country: str = "IND", limit: int = 6):
+    def search_companies(self, query: str, country: str = "IND", limit: int = 10):
         body = {
             "search": {"query": query, "mode": "hybrid"},
             "filters": {"field": "locations.country", "type": "=", "value": country},
@@ -92,16 +92,53 @@ class Crustdata:
         }
         return self._post("/company/search", body).get("companies", []) or []
 
-    def enrich_domain(self, domain: str):
-        data = self._post("/company/enrich", {"domains": [domain],
-                                              "fields": ["basic_info", "headcount", "locations"]})
-        if isinstance(data, list) and data:
-            matches = data[0].get("matches") or []
-            if matches:
-                best = max(matches, key=lambda m: m.get("confidence_score") or 0)
-                return best.get("company_data")
+    def enrich_domain(self, domain: str, fields=("basic_info", "headcount", "locations")):
+        """Best record for a domain. Crustdata can rank a different company first
+        (e.g. one that once linked to the domain), so a record that does not list
+        the domain among its own domains is returned with _domain_match=False."""
+        data = self._post("/company/enrich", {"domains": [domain], "fields": list(fields)})
+        if not (isinstance(data, list) and data):
+            return None
+        matches = data[0].get("matches") or []
+        if not matches:
+            return None
+        want = domain.lower().removeprefix("www.")
+
+        def owns(m):
+            info = (m.get("company_data") or {}).get("basic_info") or {}
+            doms = [str(d).lower().removeprefix("www.") for d in (info.get("all_domains") or [])]
+            if info.get("primary_domain"):
+                doms.append(str(info["primary_domain"]).lower().removeprefix("www."))
+            return want in doms
+
+        owned = [m for m in matches if owns(m)]
+        best = max(owned or matches, key=lambda m: m.get("confidence_score") or 0)
+        rec = dict(best.get("company_data") or {})
+        rec["_domain_match"] = bool(owned)
+        rec["_confidence"] = best.get("confidence_score")
+        rec["_alternatives"] = len(matches)
+        return rec
+
+    def enrich_id(self, company_id, fields=("basic_info", "headcount", "locations")):
+        """Enrich by Crustdata company id: an exact key, so no ownership check is needed."""
+        data = self._post("/company/enrich", {"crustdata_company_ids": [int(company_id)], "fields": list(fields)})
+        if isinstance(data, list) and data and data[0].get("matches"):
+            rec = dict(data[0]["matches"][0].get("company_data") or {})
+            rec["_domain_match"] = True
+            return rec
         return None
 
-    def web_search(self, query: str):
-        data = self._post("/web/search/live", {"query": query, "sources": ["web", "news"]})
+    def identify(self, name=None, domain=None):
+        """Free. Returns [(confidence, company_data)] for a name or a domain."""
+        body = {"names": [name]} if name else {"domains": [domain]}
+        data = self._post("/company/identify", body)
+        out = []
+        if isinstance(data, list):
+            for item in data:
+                for m in item.get("matches") or []:
+                    out.append((m.get("confidence_score") or 0, m.get("company_data") or {}))
+        return out
+
+    def web_search(self, query: str, sources=("web", "news"), location="IN"):
+        data = self._post("/web/search/live", {"query": query, "sources": list(sources), "location": location})
         return data.get("results", []) if isinstance(data, dict) else []

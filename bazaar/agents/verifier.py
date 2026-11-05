@@ -168,21 +168,29 @@ def verify_real(store, companies, spec=None, limit=3):
     cd = Crustdata(on_event=lambda kind, msg: store.emit("Verifier", kind, msg))
     p = config.POLICY
     out = []
-    for co in companies[:limit]:
-        if not co.get("domain"):
-            continue
+    for co in [c for c in companies if c.get("domain") or c.get("crustdata_company_id")][:limit]:
+        key = co.get("domain") or f"id-{co['crustdata_company_id']}"
         try:
-            data = cd.enrich_domain(co["domain"])
+            data = (cd.enrich_domain(co["domain"]) if co.get("domain")
+                    else cd.enrich_id(co["crustdata_company_id"]))
         except CrustdataError as e:
             store.emit("Verifier", "tool_error", f"Crustdata enrich failed for {co['name']}: {e} — marked unverifiable")
             out.append({**co, "verdict": "UNVERIFIABLE", "reasons": [str(e)]})
             continue
         if not data:
-            store.emit("Verifier", "real_company", f"{co['name']} ({co['domain']}): no Crustdata record — "
+            store.emit("Verifier", "real_company", f"{co['name']} ({key}): no Crustdata record — "
                        "cannot verify, not guessing", {"company": co["name"]})
             out.append({**co, "verdict": "NO_RECORD", "reasons": ["no Crustdata record"]})
             continue
-        subj = f"real:{co['domain']}"
+        if not data.get("_domain_match"):
+            other = dig(data, "basic_info.name")
+            msg = (f"Crustdata's best match for {co['domain']} is '{other}', which does not list that domain "
+                   "as its own — a different company, so its numbers are not used")
+            store.fact(f"real:{key}", "entity_mismatch", {"matched": other}, "Crustdata /company/enrich")
+            store.emit("Verifier", "real_company", f"{co['name']}: UNVERIFIABLE — {msg}", {"company": co["name"]})
+            out.append({**co, "verdict": "UNVERIFIABLE", "reasons": [msg]})
+            continue
+        subj = f"real:{key}"
         src, url = "Crustdata /company/enrich", "https://api.crustdata.com/company/enrich"
         hc = dig(data, "headcount.total")
         yf = dig(data, "basic_info.year_founded")
@@ -219,11 +227,11 @@ def verify_real(store, companies, spec=None, limit=3):
         else:
             verdict = "NOT_SUITABLE"
         trend = f", {hc6} on {hc6_date}" if hc6 else ""
-        out.append({**co, "headcount": hc, "headcount_6mo_ago": hc6, "year_founded": yf, "headquarters": hq,
+        out.append({**co, "key": key, "headcount": hc, "headcount_6mo_ago": hc6, "year_founded": yf, "headquarters": hq,
                     "status": status, "capacity_month": cap, "needed_month": need, "verdict": verdict,
                     "reasons": reasons})
         store.emit("Verifier", "real_company",
-                   f"Real company {co['name']} ({co['domain']}, {hq}): {status or 'status ?'}, headcount {hc}{trend}, "
+                   f"Real company {co['name']} ({co.get('domain') or 'no website on record'}, {hq}): {status or 'status ?'}, headcount {hc}{trend}, "
                    f"founded {yf} → {verdict}" + (f" ({'; '.join(reasons)})" if reasons else
                                                   f" (≈{cap:,}/month ≥ ≈{need:,} needed)")
                    + " — source Crustdata. Reference only, not contacted.",
