@@ -76,7 +76,7 @@ class HumanAnswers(Fresh):
         run_id, status = self.run_purchase("We need leather laptop sleeves for the office in Bengaluru, quickly")
         self.assertEqual(status, "needs_input")
         asked = {a["field"] for a in json.loads(db.Store(run_id).exceptions()[0]["detail"])["ask"]}
-        self.assertEqual(asked, {"item", "deadline", "budget"})  # city was in the request
+        self.assertEqual(asked, {"item", "budget"})  # city stated; deadline = buyer-profile lead time
 
         # an unreadable answer is asked again, not guessed
         self.assertTrue(orchestrator.answer(run_id, {"item": "5000 leather laptop sleeves",
@@ -171,13 +171,50 @@ class UnseenRequests(Fresh):
         self.assertEqual(price(tight), price(loose))
         self.assertEqual(db.Store(rid).step_done("contract")["terms"]["unit_price_paise"], 229 * 100)
 
-    def test_item_outside_supplier_line_goes_to_a_human(self):
-        rid, status = self.run_purchase("Buy 300 cotton tote bags for Pune office by 1 Dec under Rs 90,000")
+    def test_any_category_completes_with_every_trap(self):
+        rid, status = self.run_purchase("we need 12000 Diet cokes under a budget of 3.5 lakh")
+        self.assertEqual(status, "completed")
+        s = db.Store(rid)
+        plan = s.step_done("plan")
+        self.assertEqual((plan["category"], plan["benchmark_price"], plan["delivery_city"], plan["deadline"]),
+                         ("beverages", 34, "Bengaluru", "2026-12-06"))  # buyer-profile defaults, stated
+        self.assertTrue(any("Assumed" in w for w in plan["warnings"]))
+        v = {r["supplier"]: r["verdict"] for r in s.step_done("verify")["results"]}
+        self.assertEqual(v["Zestora Beverages Hub"], "REJECT")
+        self.assertEqual(v["Vantrix Beverages"], "REJECT")  # 21× capacity claim, even on a small order
+        c = s.step_done("contract")
+        self.assertEqual(c["voided"][0]["supplier"], "Ambrel Beverages Pvt Ltd")
+        self.assertEqual(c["supplier"], "Sarvaka Beverages Co.")
+        self.assertLessEqual(c["terms"]["total_paise"], 3_50_000_00)
+        self.assertEqual(len(bank.transfers_for_reference(c["po_number"])), 1)
+        self.assertEqual(s.step_done("inbox_watch")["processed"][0]["status"], "held")
+        self.assertEqual(s.step_done("audit")["flags"], [])
+
+    def test_large_advance_waits_for_a_human_then_pays_once(self):
+        rid, status = self.run_purchase("50 laptops for our Pune team by 10 December, budget 30 lakh")
         self.assertEqual(status, "needs_human")
         s = db.Store(rid)
-        self.assertEqual(s.step_done("plan")["item"], "cotton tote bag")
-        self.assertEqual(s.exceptions()[0]["kind"], "no_supplier")
+        exc = [e for e in s.exceptions() if e["kind"] == "approval_needed"][0]
         self.assertEqual(db.conn().execute("SELECT COUNT(*) n FROM bank_transfers").fetchone()["n"], 0)
+        self.assertEqual(s.step_done("audit")["flags"], [])  # unpaid is not a contradiction
+        out = payments.resolve_exception(exc["id"], "approve")
+        self.assertTrue(out["ok"])
+        self.assertEqual(orchestrator.run(rid), "completed")
+        po = s.step_done("contract")["po_number"]
+        self.assertEqual(len(bank.transfers_for_reference(po)), 1)
+        self.assertFalse(payments.resolve_exception(exc["id"], "approve")["ok"])  # cannot approve twice
+        self.assertEqual(orchestrator.run(rid), "completed")
+        self.assertEqual(len(bank.transfers_for_reference(po)), 1)
+
+    def test_textiles_and_unknown_items(self):
+        rid, status = self.run_purchase("Buy 300 cotton tote bags for Pune office by 1 Dec under Rs 90,000")
+        s = db.Store(rid)
+        self.assertEqual((s.step_done("plan")["item"], s.step_done("plan")["category"]), ("cotton tote bag", "apparel"))
+        self.assertEqual(status, "completed")
+        rid, status = self.run_purchase("We need 40 drones in Delhi by 20 December under 30 lakh")
+        plan = db.Store(rid).step_done("plan")
+        self.assertEqual((plan["category"], plan["benchmark_price"]), ("general", None))
+        self.assertIn(status, ("completed", "needs_human"))  # advance above auto-pay limit needs a human
 
     def test_nobody_verified_says_so(self):
         rid, status = self.run_purchase(EXAMPLE.replace("5,000", "50,000").replace("12 lakh", "1.2 crore"))

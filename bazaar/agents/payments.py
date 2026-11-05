@@ -83,18 +83,31 @@ def pay_advance(store, market, contract):
         return {"status": "held", "invoice": inv, "checks": checks, "exception_id": eid}
 
     amount = terms["advance_paise"]
-    if amount > config.POLICY["auto_pay_limit_paise"]:
+    approval = _approval(store.run_id, po)
+    if amount > config.POLICY["auto_pay_limit_paise"] and approval and approval["status"] == "rejected":
+        store.emit("Payments", "exception", f"Human rejected the {config.fmt_inr(amount, '₹')} advance — not paying")
+        return {"status": "rejected_by_human", "exception_id": approval["id"]}
+    if amount > config.POLICY["auto_pay_limit_paise"] and not (approval and approval["status"] == "approved"):
         eid = store.raise_exception("approval_needed", f"Advance {config.fmt_inr(amount, '₹')} exceeds auto-pay limit",
-                                    {"invoice": inv}, f"{store.run_id}:approve:{po}")
+                                    {"invoice": inv, "po_number": po, "checks": checks,
+                                     "recommended_action": f"Approve to pay {terms['advance_pct']}% advance on {po} to "
+                                                           f"{vendor['legal_name']} (invoice matched on every check)."},
+                                    f"{store.run_id}:approve:{po}")
         store.emit("Payments", "exception", "Amount above auto-pay limit — waiting for a human approver")
         return {"status": "awaiting_approval", "exception_id": eid}
     if terms["advance_pct"] > config.POLICY["max_advance_pct"]:
         raise RuntimeError("advance above policy reached Payments")  # unreachable by construction
 
     intent = _intent(store.run_id, key, po, amount, vendor["bank_account"])
-    store.emit("Payments", "approve", f"Auto-approved under policy: {config.fmt_inr(amount, '₹')} ≤ auto-pay limit "
-               f"{config.fmt_inr(config.POLICY['auto_pay_limit_paise'], '₹')}, advance {terms['advance_pct']}% ≤ "
-               f"{config.POLICY['max_advance_pct']}%. Payment intent {key} recorded.", {"intent": intent})
+    if amount > config.POLICY["auto_pay_limit_paise"]:
+        store.emit("Payments", "approve", f"Approved by a human (exception #{approval['id']}): "
+                   f"{config.fmt_inr(amount, '₹')} is above the auto-pay limit. Payment intent {key} recorded.",
+                   {"intent": intent})
+    else:
+        store.emit("Payments", "approve", f"Auto-approved under policy: {config.fmt_inr(amount, '₹')} ≤ auto-pay "
+                   f"limit {config.fmt_inr(config.POLICY['auto_pay_limit_paise'], '₹')}, advance "
+                   f"{terms['advance_pct']}% ≤ {config.POLICY['max_advance_pct']}%. Payment intent {key} recorded.",
+                   {"intent": intent})
     if existing:
         transfer = existing
         store.emit("Payments", "recover", f"♻️ Bank already holds transfer {transfer['id']} for key {key} "
@@ -149,6 +162,14 @@ def watch_inbox(store, market, contract):
     return {"processed": results}
 
 
+def _approval(run_id, po):
+    row = db.conn().execute("SELECT id, status FROM exceptions WHERE run_id=? AND kind='approval_needed' "
+                            "AND detail LIKE ? ORDER BY id DESC LIMIT 1", (run_id, f'%"{po}"%')).fetchone()
+    if not row:
+        return None
+    return {"id": row["id"], "status": row["status"]}
+
+
 def resolve_exception(exc_id: int, action: str):
     """Called by a human from the UI. Even an approval cannot cause a second payment."""
     c = db.conn()
@@ -157,6 +178,19 @@ def resolve_exception(exc_id: int, action: str):
         return {"ok": False, "message": "no such exception"}
     store = db.Store(row["run_id"])
     detail = json.loads(row["detail"])
+    if row["status"] != "open":
+        return {"ok": False, "message": f"exception #{exc_id} is already {row['status']}"}
+    if row["kind"] == "approval_needed" and action in ("approve", "reject"):
+        # A human decision on a payment above the auto-pay limit. The payment step is
+        # re-run; it pays through the same idempotency key, so it can never pay twice.
+        status = "approved" if action == "approve" else "rejected"
+        c.execute("UPDATE exceptions SET status=?, resolution=?, resolved_at=? WHERE id=?",
+                  (status, f"{status.capitalize()} by a human approver", db.now(), exc_id))
+        c.execute("DELETE FROM steps WHERE run_id=? AND name IN ('payment_advance','inbox_watch','audit')",
+                  (row["run_id"],))
+        store.emit("Human", "resolve", f"Human {status} exception #{exc_id}: {row['title']}", pace=False)
+        db.set_run_status(row["run_id"], "queued")
+        return {"ok": True, "message": status, "resume": row["run_id"]}
     if action == "reject":
         c.execute("UPDATE exceptions SET status='resolved', resolution=?, resolved_at=? WHERE id=?",
                   ("Rejected as fraud by a human; supplier alerted via the verified phone number", db.now(), exc_id))

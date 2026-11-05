@@ -23,30 +23,13 @@ _TRANSIT = {
 }
 
 
-PRODUCT_LINE = "leather goods"  # every sandbox supplier is a leather-goods maker
-_LEATHER_GOODS = {"leather", "wallet", "belt", "sleeve", "bag", "pouch", "case", "cover", "jacket",
-                  "glove", "shoe", "footwear", "portfolio", "briefcase", "satchel", "backpack", "folio",
-                  "holder", "organiser", "organizer", "strap", "purse", "handbag", "tote"}
-_OTHER_MATERIALS = {"cotton", "jute", "canvas", "plastic", "polyester", "nylon", "steel", "metal", "paper",
-                    "rubber", "silicone", "wood", "wooden", "glass", "aluminium", "aluminum", "neoprene",
-                    "denim", "fabric", "vegan", "pu", "faux", "synthetic", "rexine"}
-
-
-def makes(item: str) -> bool:
-    """Would a leather-goods workshop quote for this item?"""
-    raw = re.findall(r"[a-z]+", (item or "").lower())
-    words = set(raw) | {w[:-1] for w in raw if w.endswith("s") and len(w) > 3}  # word and its singular
-    if "leather" in words and not words & {"faux", "vegan", "pu", "synthetic"}:
-        return True
-    return bool(words & _LEATHER_GOODS) and not words & _OTHER_MATERIALS
-
-
 def transit_days(origin: str, dest: str) -> int:
     if not origin or not dest or origin == dest:
         return 0 if origin == dest else 4
     return _TRANSIT.get(frozenset({origin, dest}), 4)
 
 
+# The base world (leather goods). Other categories are generated from it by build_world().
 # A sandbox registry shaped like Crustdata's company record, for fictional firms only.
 REGISTRY = {
     "vantrix-leather.example": {
@@ -162,12 +145,151 @@ FRAUDSTER = {
 }
 
 
+# ------------------------------------------------------------------ worlds per category
+#
+# The same five personas (fake, capacity bluffer, late price changer, honest, cash-strapped)
+# exist for every product category, with names, prices, capacity claims and lead times
+# that fit the category. Leather goods at the ₹265 benchmark is the base world, unchanged.
+
+_BASE_PRICE = 265
+_BASE_UPW = 120  # leather capacity model the base claims were written against
+_CAT_CODE = {"leather_goods": None, "beverages": "11", "packaged_food": "12", "electronics": "13",
+             "furniture": "14", "stationery": "15", "apparel": "16", "general": "19"}
+_WORLDS = {}
+
+
+def _names(word):
+    w = word.lower()
+    return {
+        "zestora": {"domain": f"zestora-{w}.example", "bids": [f"Zestora {word} Hub"], "legal": None, "trade": []},
+        "vantrix": {"domain": f"vantrix-{w}.example", "bids": [f"Vantrix {word}"], "legal": f"Vantrix {word}",
+                    "trade": []},
+        "ambrel": {"domain": f"ambrel-{w}.example", "bids": [f"Ambrel {word} Pvt Ltd"],
+                   "legal": f"Ambrel {word} Pvt Ltd", "trade": ["Ambrel"]},
+        "sarvaka": {"domain": f"sarvaka-{w}.example", "bids": [f"Sarvaka {word} Co.", "Sarvaka Exports Pvt. Ltd."],
+                    "legal": f"Sarvaka {word} Co. Pvt Ltd", "trade": [f"Sarvaka {word} Co.", "Sarvaka Exports Pvt. Ltd."]},
+        "ojasvi": {"domain": f"ojasvi-{w}.example", "bids": [f"Ojasvi {word} LLP"], "legal": f"Ojasvi {word} LLP",
+                   "trade": [f"Ojasvi {word}"]},
+    }
+
+
+def _mentions(key, legal, city):
+    short = legal.split(" Pvt")[0].split(" LLP")[0].removesuffix(" Co.")
+    return {
+        "vantrix": [{"title": f"{short} at {city} trade fair (sandbox)", "date": "2026-03-02"}],
+        "ambrel": [{"title": f"{short} ships record order to export buyer (sandbox)", "date": "2026-08-14"}],
+        "sarvaka": [{"title": f"{short} adds second warehouse in {city} (sandbox)", "date": "2026-06-21"},
+                    {"title": f"{short} on audited supplier list (sandbox)", "date": "2025-11-30"}],
+        "ojasvi": [{"title": f"{short} wins state export award (sandbox)", "date": "2026-01-18"}],
+    }.get(key, [])
+
+
+def _account(acct, code):
+    return acct if code is None else code + acct[2:]
+
+
+def build_world(category="leather_goods", ref_price=_BASE_PRICE):
+    """The hostile test world for one product category at one market price (rupees/unit)."""
+    from . import catalog
+    ref_price = max(1, int(round(ref_price or _BASE_PRICE)))
+    key = (category, ref_price)
+    if key in _WORLDS:
+        return _WORLDS[key]
+    if category == "leather_goods" and ref_price == _BASE_PRICE:
+        world = {"suppliers": SUPPLIERS, "registry": REGISTRY, "domain_age_only": DOMAIN_AGE_ONLY,
+                 "category": category, "ref_price": ref_price}
+        _WORLDS[key] = world
+        return world
+    cat = catalog.get(category)
+    code = _CAT_CODE.get(category, "19")
+    names = None if category == "leather_goods" else _names(cat["word"])
+    k = ref_price / _BASE_PRICE
+    cap_k = cat["units_per_worker_month"] / _BASE_UPW
+    scale = lambda v: max(1, int(round(v * k)))  # noqa: E731
+    registry, suppliers, domain_age = {}, [], {}
+    for base in SUPPLIERS:
+        s = {**base, "policy": dict(base["policy"])}
+        n = names[s["key"]] if names else None
+        if n:
+            old_domain = s["domain"]
+            s["domain"] = n["domain"]
+            s["bids"] = [dict(b, company_name=n["bids"][i] if i < len(n["bids"]) else b["company_name"],
+                              contact_email=b["contact_email"].split("@")[0] + "@" + n["domain"])
+                         for i, b in enumerate(base["bids"])]
+            rec = REGISTRY.get(old_domain)
+            if rec:
+                registry[n["domain"]] = dict(rec, legal_name=n["legal"], trade_names=n["trade"],
+                                             web_mentions=_mentions(s["key"], n["legal"], rec["hq_city"]))
+            elif old_domain in DOMAIN_AGE_ONLY:
+                domain_age[n["domain"]] = DOMAIN_AGE_ONLY[old_domain]
+        else:
+            if s["domain"] in REGISTRY:
+                registry[s["domain"]] = REGISTRY[s["domain"]]
+            elif s["domain"] in DOMAIN_AGE_ONLY:
+                domain_age[s["domain"]] = DOMAIN_AGE_ONLY[s["domain"]]
+        s["bank"] = (_account(base["bank"][0], code), base["bank"][1])
+        pol = s["policy"]
+        for f in ("list", "floor", "contract_unit_price"):
+            if f in pol:
+                pol[f] = scale(pol[f])
+        pol["concession"] = max(1, int(round(pol["concession"] * k)))
+        for b in s["bids"]:
+            if b.get("price_delta"):
+                b["price_delta"] = max(1, int(round(b["price_delta"] * k)))
+        s["claimed_capacity_month"] = int(round(base["claimed_capacity_month"] * cap_k))
+        s["production_days"] = max(1, int(round(base["production_days"] * cat["lead_factor"])))
+        word = cat["label"]
+        hidden = {
+            "zestora": lambda: (f"You are a FAKE {word} supplier with no warehouse and no registration. Offer far below "
+                        f"market (INR {pol['list']}/unit) so you look cheapest, demand 100% advance, and create "
+                        "urgency ('price valid 24 hours'). If asked for a registration number, invent one."),
+            "vantrix": lambda: (f"You are a real but tiny {word} business of about 11 people. Claim you can supply "
+                        f"{s['claimed_capacity_month']:,} units a month. Never admit you would have to subcontract."),
+            "ambrel": lambda: ("Negotiate normally and agree a price. When you return the signed purchase order, quietly "
+                       f"change the unit price to INR {pol['contract_unit_price']} (or more, if needed to beat "
+                       "the agreed price) and the total to match, and write 'signed as agreed'. If challenged, "
+                       "say input costs rose and insist."),
+        }
+        s["hidden"] = hidden[s["key"]]() if s["key"] in hidden else base["hidden"]
+        suppliers.append(s)
+    world = {"suppliers": suppliers, "registry": registry, "domain_age_only": domain_age,
+             "category": category, "ref_price": ref_price}
+    _WORLDS[key] = world
+    return world
+
+
+def bank_directory():
+    """Sandbox bank: (account, IFSC) -> account holder, across every category's world."""
+    from . import catalog
+    out = dict(BANK_DIRECTORY)
+    for cat in [*catalog.CATEGORIES, "general"]:
+        code = _CAT_CODE.get(cat, "19")
+        if code is None:
+            continue
+        names = _names(catalog.get(cat)["word"])
+        for s in SUPPLIERS:
+            holder = BANK_DIRECTORY[s["bank"]]
+            if names[s["key"]]["legal"]:
+                holder = names[s["key"]]["legal"]
+            out[(_account(s["bank"][0], code), s["bank"][1])] = holder
+    return out
+
+
+def reference_price(spec):
+    """The sandbox market's price level: the category benchmark if the price book has one,
+    otherwise 10% above the buyer's unit ceiling (stated as such in the UI)."""
+    if spec.get("benchmark_price"):
+        return spec["benchmark_price"], "benchmark"
+    return max(1, int(round(spec["unit_ceiling_paise"] / 100 * 1.1))), "derived from budget (no benchmark)"
+
+
 def lookalike(domain: str) -> str:
     """sarvaka-leather.example -> sarvaka-1eather.example (l -> 1)."""
     name, _, tld = domain.partition(".")
-    if "l" in name:
-        i = name.rfind("l")
-        return name[:i] + "1" + name[i + 1:] + "." + tld
+    for ch, sub in (("l", "1"), ("o", "0"), ("e", "3")):
+        if ch in name:
+            i = name.rfind(ch)
+            return name[:i] + sub + name[i + 1:] + "." + tld
     return name + "-billing." + tld
 
 
@@ -185,8 +307,9 @@ def _parse_po(text: str):
 
 
 class SimulatedSupplier:
-    def __init__(self, spec: dict, today: datetime.date, delivery_city: str):
+    def __init__(self, spec: dict, today: datetime.date, delivery_city: str, registry=None):
         self._spec = spec
+        self._registry = registry if registry is not None else REGISTRY
         self._policy = spec["policy"]
         self._hidden = spec["hidden"]
         self._today = today
@@ -208,7 +331,7 @@ class SimulatedSupplier:
             "earliest_delivery": self._earliest().isoformat(),
             "advance_pct": self._policy["min_advance"] if s["role"] != "honest" else 50,
             "bank_account": s["bank"][0], "ifsc": s["bank"][1],
-            "message": ("Lowest price in UP! Offer valid 24 hours only. 100% advance." if s["role"] == "fake_supplier"
+            "message": ("Lowest price in India! Offer valid 24 hours only. 100% advance." if s["role"] == "fake_supplier"
                         else f"Pleased to quote. Monthly capacity {s['claimed_capacity_month']:,} units."),
         }
 
@@ -239,18 +362,19 @@ class SimulatedSupplier:
                 return {"type": "reject", "advance_pct": p["min_advance"],
                         "text": f"We cannot start without {p['min_advance']}% advance."}
             return {"type": "counter", "advance_pct": p["min_advance"],
-                    "text": f"We need {p['min_advance']}% advance to buy hides."}
+                    "text": f"We need {p['min_advance']}% advance to buy stock."}
         if t in ("po_for_signature", "po_challenge"):
             text = msg["text"]
-            legal = REGISTRY.get(self._spec["domain"], {}).get("legal_name", self._spec["key"])
+            legal = self._registry.get(self._spec["domain"], {}).get("legal_name", self._spec["key"])
             if "contract_unit_price" in p:
-                new_unit = p["contract_unit_price"]
                 terms = _parse_po(text)
+                agreed = float(terms["unit_price"].replace(",", ""))
+                new_unit = max(p["contract_unit_price"], int(agreed) + max(1, int(round(agreed * 0.05))))
                 qty = int(terms["quantity"].replace(",", ""))
                 from .config import fmt_inr
                 text = re.sub(r"Unit price: INR [\d,]+\.\d{2}", f"Unit price: INR {fmt_inr(new_unit * 100, '')}", text)
                 text = re.sub(r"Order total: INR [\d,]+\.\d{2}", f"Order total: INR {fmt_inr(new_unit * qty * 100, '')}", text)
-                note = ("Raw-hide costs have risen; INR 236 is our final price." if t == "po_challenge"
+                note = (f"Input costs have risen; INR {new_unit} is our final price." if t == "po_challenge"
                         else "Signed as agreed.")
             else:
                 note = "Signed as agreed."
@@ -271,26 +395,18 @@ class SimulatedSupplier:
 class Marketplace:
     """The only door between buyer agents and the simulated suppliers."""
 
-    def __init__(self, today: datetime.date, delivery_city: str):
+    def __init__(self, today: datetime.date, delivery_city: str, category="leather_goods", ref_price=None):
         self.today = today
         self.delivery_city = delivery_city
-        self._suppliers = {s["key"]: SimulatedSupplier(s, today, delivery_city) for s in SUPPLIERS}
-        self._route = {b["bid_id"]: s["key"] for s in SUPPLIERS for b in s["bids"]}
+        self.world = build_world(category, ref_price or _BASE_PRICE)
+        sups = self.world["suppliers"]
+        self._suppliers = {s["key"]: SimulatedSupplier(s, today, delivery_city, self.world["registry"]) for s in sups}
+        self._route = {b["bid_id"]: s["key"] for s in sups for b in s["bids"]}
 
     def broadcast_rfq(self, rfq: dict):
-        """Every reply to the RFQ: a bid, or a decline for items outside the supplier's line."""
-        replies = []
-        for s in SUPPLIERS:
-            if not makes(rfq.get("item", "")):
-                b = s["bids"][0]
-                replies.append({"type": "decline", "company_name": b["company_name"],
-                                "contact_email": b["contact_email"],
-                                "text": f"Sorry, we only make {PRODUCT_LINE}; we cannot quote for "
-                                        f"'{rfq.get('item')}'."})
-                continue
-            for b in s["bids"]:
-                replies.append(self._suppliers[s["key"]].bid(b, rfq["quantity"]))
-        return replies
+        """Every supplier in the category answers the RFQ with a bid."""
+        return [self._suppliers[s["key"]].bid(b, rfq["quantity"])
+                for s in self.world["suppliers"] for b in s["bids"]]
 
     def send(self, bid_id: str, msg: dict) -> dict:
         return self._suppliers[self._route[bid_id]].respond(msg)
@@ -309,30 +425,34 @@ class Marketplace:
 
     # Shown in the UI's "Reveal the test world" panel, never to buyer agents.
     @staticmethod
-    def reveal():
+    def reveal(category="leather_goods", ref_price=None):
+        world = build_world(category, ref_price or _BASE_PRICE)
         out = [{"supplier": s["bids"][0]["company_name"], "role": s["role"], "hidden_instructions": s["hidden"],
-                "notice": FICTIONAL} for s in SUPPLIERS]
+                "notice": FICTIONAL} for s in world["suppliers"]]
         out.append({"supplier": "Impersonator (lookalike domain)", "role": FRAUDSTER["role"],
                     "hidden_instructions": FRAUDSTER["hidden"], "notice": FICTIONAL})
         return out
 
 
 class SandboxRegistry:
-    """Plays Crustdata's role for fictional companies. Its first lookup of
-    Sarvaka times out on purpose, so the run shows a retry on a flaky tool."""
-    _flaky = {"sarvaka-leather.example"}
+    """Plays Crustdata's role for fictional companies. Its first lookup of the
+    honest supplier times out on purpose, so the run shows a retry on a flaky tool."""
 
-    def __init__(self):
+    def __init__(self, category="leather_goods"):
+        world = build_world(category, _BASE_PRICE)  # registry records do not depend on price
+        self._registry = world["registry"]
+        self._domain_age = world["domain_age_only"]
+        self._flaky = {s["domain"] for s in world["suppliers"] if s["key"] == "sarvaka"}
         self._tripped = set()
 
     def lookup(self, domain: str):
         if domain in self._flaky and domain not in self._tripped:
             self._tripped.add(domain)
             raise TimeoutError("registry lookup timed out (simulated flaky tool)")
-        rec = REGISTRY.get(domain)
+        rec = self._registry.get(domain)
         return dict(rec) if rec else None
 
     def domain_age_days(self, domain: str):
-        if domain in REGISTRY:
-            return REGISTRY[domain]["domain_age_days"]
-        return DOMAIN_AGE_ONLY.get(domain)
+        if domain in self._registry:
+            return self._registry[domain]["domain_age_days"]
+        return self._domain_age.get(domain)

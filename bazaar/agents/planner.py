@@ -8,7 +8,7 @@ If a field that changes the result is still missing, the Planner asks a human.
 import datetime
 import re
 
-from .. import config, llm
+from .. import catalog, config, llm
 
 CITIES = {
     "bengaluru": "Bengaluru", "bangalore": "Bengaluru", "blr": "Bengaluru", "mumbai": "Mumbai",
@@ -261,6 +261,20 @@ def plan(store, request: str):
     retry = {}
     _apply_answers(store.answers(), found, evidence, today, notes, retry)
 
+    # Buyer profile: a procurement team ships to its own address by default and
+    # works to a standard lead time. Defaults are stated as assumptions, never hidden;
+    # an unreadable answer is asked again rather than replaced by a default.
+    defaults = []
+    if "city" not in found and "city" not in retry:
+        found["city"] = config.BUYER["ship_to_city"]
+        evidence["city"] = f"{found['city']} (buyer profile default)"
+        defaults.append(f"Ship-to {found['city']} from the buyer profile — not stated in the request")
+    if "deadline" not in found and "deadline" not in retry:
+        found["deadline"] = today + datetime.timedelta(days=config.BUYER["default_lead_days"])
+        evidence["deadline"] = f"{found['deadline']} (standard {config.BUYER['default_lead_days']}-day lead time)"
+        defaults.append(f"Deadline {found['deadline']} = standard {config.BUYER['default_lead_days']}-day lead time "
+                        "— not stated in the request")
+
     ask = []
     if "quantity" not in found or "item" not in found:
         ask.append(_ask("item"))
@@ -280,6 +294,9 @@ def plan(store, request: str):
         spec["quantity"] = found["quantity"]
         spec["item"] = found["item"]
         spec["material"] = "leather" if "leather" in found["item"] else None
+        cat = catalog.categorize(found["item"])
+        spec["category"], spec["category_label"] = cat["key"], cat["label"]
+        spec["benchmark_price"] = cat["benchmark_price"]
     if "city" in found:
         spec["delivery_city"] = found["city"]
     if "deadline" in found:
@@ -315,11 +332,12 @@ def plan(store, request: str):
         "specification": {
             "item": spec["item"], "quantity": spec["quantity"],
             "material": spec["material"] or "as described",
-            "assumed": ["Genuine leather outer, padded lining, fits 13–15 inch laptops (Planner default — confirm)",
+            "category": spec["category_label"],
+            "assumed": [catalog.get(spec["category"])["assumed"],
                         "Prices all-inclusive: GST and freight to " + spec["delivery_city"],
                         "Inspection on arrival at AQL 2.5"],
         },
-        "assumptions": [f"Advance capped at {config.POLICY['max_advance_pct']}% by policy",
+        "assumptions": defaults + [f"Advance capped at {config.POLICY['max_advance_pct']}% by policy",
                         f"Delivery must land by {latest} ({config.POLICY['delivery_buffer_days']}-day buffer)"],
         "tasks": [
             {"agent": "Scout", "task": "Find suppliers: RFQ to the sandbox marketplace + Crustdata discovery"},
@@ -331,12 +349,17 @@ def plan(store, request: str):
             {"agent": "Auditor", "task": "Link every decision to evidence and flag contradictions"},
         ],
     })
-    if spec["unit_ceiling_paise"] < 80_00 and spec["material"] == "leather":
-        spec["warnings"].append("Budget per unit is below typical leather-goods prices; expect few or no deals.")
+    bench = spec.get("benchmark_price")
+    if bench and spec["unit_ceiling_paise"] < bench * 100 * 0.8:
+        spec["warnings"].append(f"Budget allows {config.fmt_inr(spec['unit_ceiling_paise'], '₹')}/unit, well below "
+                                f"the ₹{bench} price-book benchmark for {spec['item']}; expect few or no deals.")
+    for d in defaults:
+        spec["warnings"].append("Assumed: " + d + ". Say otherwise in the request to change it.")
     store.emit("Planner", "plan",
                f"{spec['quantity']:,} × {spec['item']} → {spec['delivery_city']} by {spec['deadline']}, "
                f"budget {config.fmt_inr(spec['budget_paise'], '₹')} "
-               f"(ceiling {config.fmt_inr(spec['unit_ceiling_paise'], '₹')}/unit)",
+               f"(ceiling {config.fmt_inr(spec['unit_ceiling_paise'], '₹')}/unit) · category {spec['category_label']}"
+               + (f", price-book benchmark ₹{bench}/unit" if bench else ", no price-book benchmark"),
                {"spec": spec["specification"], "evidence": evidence, "warnings": spec["warnings"]})
     for w in spec["warnings"]:
         store.emit("Planner", "warning", w)

@@ -67,6 +67,14 @@ def ssl_context():
     return _SSL
 
 
+# Buyer profile: who is buying and the defaults a procurement team works to.
+BUYER = {
+    "name": os.environ.get("BAZAAR_BUYER", "Demo Buyer Pvt Ltd"),
+    "ship_to_city": os.environ.get("BAZAAR_SHIP_TO", "Bengaluru"),
+    "default_lead_days": int(os.environ.get("BAZAAR_LEAD_DAYS", "30")),
+}
+
+
 def today() -> datetime.date:
     value = os.environ.get("BAZAAR_TODAY")
     return datetime.date.fromisoformat(value) if value else datetime.date.today()
@@ -93,7 +101,7 @@ def crash_at() -> str:
 
 
 def buyer_name() -> str:
-    return os.environ.get("BAZAAR_BUYER", "Demo Buyer Pvt Ltd")
+    return BUYER["name"]
 
 
 def fmt_inr(paise: int, symbol: str = "INR ") -> str:

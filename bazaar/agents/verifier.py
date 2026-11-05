@@ -8,7 +8,7 @@ import datetime
 import re
 import time
 
-from .. import bank, config
+from .. import bank, catalog, config
 from ..crustdata import Crustdata, CrustdataError, dig
 from ..sandbox import SandboxRegistry, transit_days
 
@@ -79,17 +79,19 @@ def verify_one(store, spec, cand, registry: SandboxRegistry):
 
         # capacity: evidence from headcount vs what this order needs before the deadline
         p = config.POLICY
-        evidence_cap = int(rec["headcount"] * p["production_share_of_headcount"] * p["units_per_worker_month"])
+        upw = catalog.get(spec.get("category"))["units_per_worker_month"]
+        evidence_cap = int(rec["headcount"] * p["production_share_of_headcount"] * upw)
         latest = datetime.date.fromisoformat(spec["latest_acceptable_delivery"])
         transit = transit_days(rec["hq_city"], spec["delivery_city"])
         prod_days = (latest - config.today()).days - transit - p["qc_days"]
         need_month = int(spec["quantity"] / max(prod_days, 1) * 30) if prod_days > 0 else 10**9
         claimed = cand["claimed_capacity_month"]
         ratio = claimed / max(evidence_cap, 1)
-        cap_ok = evidence_cap >= need_month
+        # A claim far beyond the evidence is a misrepresentation even if the order is small.
+        cap_ok = evidence_cap >= need_month and ratio <= p["capacity_claim_tolerance"]
         detail = (f"Needs ≈{need_month:,}/month ({spec['quantity']:,} units in {prod_days} production days). "
                   f"Evidence supports ≈{evidence_cap:,}/month ({rec['headcount']} staff × "
-                  f"{p['production_share_of_headcount']:.0%} × {p['units_per_worker_month']}/worker). "
+                  f"{p['production_share_of_headcount']:.0%} × {upw:,}/worker/month for {catalog.get(spec.get('category'))['label']}). "
                   f"Claimed {claimed:,}/month")
         if ratio > p["capacity_claim_tolerance"]:
             detail += f" — {ratio:.1f}× the evidence: claim unsupported"
@@ -200,7 +202,7 @@ def verify_real(store, companies, spec=None, limit=3):
             reasons.append(f"headcount fell {hc6}→{hc} since {hc6_date}")
         cap = need = None
         if hc and spec and spec.get("latest_acceptable_delivery"):
-            cap = int(hc * p["production_share_of_headcount"] * p["units_per_worker_month"])
+            cap = int(hc * p["production_share_of_headcount"] * catalog.get(spec.get("category"))["units_per_worker_month"])
             latest = datetime.date.fromisoformat(spec["latest_acceptable_delivery"])
             prod_days = (latest - config.today()).days - transit_days(None, spec["delivery_city"]) - p["qc_days"]
             need = int(spec["quantity"] / max(prod_days, 1) * 30) if prod_days > 0 else 10**9
@@ -230,7 +232,7 @@ def verify_real(store, companies, spec=None, limit=3):
 
 
 def verify(store, spec, scouted):
-    registry = SandboxRegistry()
+    registry = SandboxRegistry(spec.get("category", "leather_goods"))
     results = []
     for cand in sorted(scouted["candidates"], key=lambda c: c["unit_price_inr"]):
         results.append(store.run_step(f"verify:{cand['domain']}", lambda c=cand: verify_one(store, spec, c, registry)))

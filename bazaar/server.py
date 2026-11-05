@@ -132,7 +132,10 @@ class Handler(BaseHTTPRequestHandler):
                 spawn(parts[2])
             self._json(out, 200 if out["ok"] else 400)
         elif len(parts) == 4 and parts[:2] == ["api", "exceptions"] and parts[3] == "resolve":
-            self._json(payments.resolve_exception(int(parts[2]), body.get("action", "")))
+            out = payments.resolve_exception(int(parts[2]), body.get("action", ""))
+            if out.get("resume"):
+                spawn(out["resume"])
+            self._json(out)
         else:
             self._json({"error": "not found"}, 404)
 

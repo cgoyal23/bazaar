@@ -71,6 +71,11 @@ def audit(store, spec, scouted, verified, negotiated, reviewed, contract, paymen
               f"Signed PO SHA-256 {contract['sha256'][:16]}… matches stored document")
         transfers = bank.transfers_for_reference(t["po_number"])
         ledger = bank.ledger_for_po(t["po_number"])
+    if contract.get("status") == "signed" and payment.get("status") != "paid":
+        check("no_payment_without_approval", len(transfers) == 0 and len(ledger) == 0,
+              f"Advance {payment.get('status', 'not paid').replace('_', ' ')}: {len(transfers)} bank transfer(s), "
+              f"{len(ledger)} ledger entr(y/ies) — nothing moves until a human decides")
+    if contract.get("status") == "signed" and payment.get("status") == "paid":
         check("exactly_one_payment", len(transfers) == 1,
               f"{len(transfers)} bank transfer(s) for {t['po_number']}")
         check("ledger_matches_bank", len(ledger) == len(transfers) and

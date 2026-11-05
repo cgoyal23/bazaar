@@ -10,7 +10,7 @@ between "bank accepted" and "ledger posted" heals on resume with no double entry
 import uuid
 
 from . import db
-from .sandbox import BANK_DIRECTORY
+from . import sandbox
 
 
 class IdempotencyConflict(Exception):
@@ -45,7 +45,7 @@ def transfer(idempotency_key: str, amount_paise: int, account: str, ifsc: str,
 
 def penny_drop(account: str, ifsc: str):
     """Account-holder name the bank returns for a 1-rupee verification transfer (sandbox)."""
-    return BANK_DIRECTORY.get((account, ifsc))
+    return sandbox.bank_directory().get((account, ifsc))
 
 
 def post_ledger(run_id: str, transfer_row: dict, po_number: str, memo: str):

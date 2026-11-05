@@ -314,13 +314,14 @@ function renderExceptions(s){
   excSig = sig;
   $("exceptions").innerHTML = s.exceptions.map(x=>{
     const failed = (x.detail.checks||[]).filter(c=>!c.ok);
-    return `<div class="exc ${x.status}"><b>#${x.id} ${esc(x.title)}</b> <span class="badge ${x.status==="open"?"b-bad":"b-ok"}">${x.status}</span>
+    return `<div class="exc ${x.status}"><b>#${x.id} ${esc(x.title)}</b> <span class="badge ${x.status==="open"?"b-bad":x.status==="rejected"?"b-warn":"b-ok"}">${x.status}</span>
       ${x.detail.invoice?`<div class="small">From ${esc(x.detail.invoice.from_email)}: “${esc(x.detail.invoice.text)}”</div>`:""}
       ${failed.length?`<ul class="checks">${failed.map(c=>`<li><span>⛔</span><span>${esc(c.detail)}</span></li>`).join("")}</ul>`:""}
       ${x.kind==="needs_input" && x.status==="open" && x.detail.ask ? answerForm(x, s) :
         x.detail.questions?`<ul>${x.detail.questions.map(q=>`<li>${esc(q)}</li>`).join("")}</ul>`:""}
       ${x.detail.recommended_action?`<div class="small"><b>Recommended:</b> ${esc(x.detail.recommended_action)}</div>`:""}
       ${x.resolution?`<div class="small" style="margin-top:4px"><b>Resolution:</b> ${esc(x.resolution)}</div>`:""}
+      ${x.status==="open" && x.kind==="approval_needed" ? `<div class="acts"><button class="primary" onclick="resolveExc(${x.id},'approve')">Approve payment</button><button class="danger" onclick="resolveExc(${x.id},'reject')">Reject</button></div>`:""}
       ${x.status==="open" && x.kind==="bank_change" ? `<div class="acts"><button class="danger" onclick="resolveExc(${x.id},'reject')">Reject as fraud</button><button onclick="resolveExc(${x.id},'approve')">Approve bank change & pay</button></div>`:""}</div>`;
   }).join("");
 }

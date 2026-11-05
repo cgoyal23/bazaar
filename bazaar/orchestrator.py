@@ -5,6 +5,7 @@ import os
 
 from . import config, db, llm
 from .crustdata import Crustdata
+from . import sandbox
 from .sandbox import Marketplace
 from .agents import auditor, contract as contract_agent, negotiator, payments, planner, risk, scout, verifier
 
@@ -66,7 +67,9 @@ def run(run_id: str):
         db.set_run_status(run_id, "needs_input")
         return "needs_input"
 
-    market = Marketplace(datetime.date.fromisoformat(spec["today"]), spec["delivery_city"])
+    ref_price, basis = sandbox.reference_price(spec)
+    market = Marketplace(datetime.date.fromisoformat(spec["today"]), spec["delivery_city"],
+                         spec.get("category", "leather_goods"), ref_price)
     scouted = store.run_step("scout", lambda: scout.scout(store, spec, market))
     if not scouted["candidates"]:
         return _hand_over(store, run_id, "no_supplier",
