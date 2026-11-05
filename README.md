@@ -55,7 +55,7 @@ Fake and inflated profiles pollute every signal product. Riptide checks each one
 | Audience shape | 9,000 followers on 40 connections, a bought-audience pattern |
 | Concurrent roles | More than three full-time jobs at once |
 | **Growth velocity** | Every scan stores a snapshot of connections and followers. A sudden spike between snapshots is flagged. |
-| **Crustdata's own verdict** (on demand) | Person Enrich `assessment.authenticity`: clearly genuine through clearly fabricated, tier 0–9. It costs no extra credits. |
+| **Crustdata's own verdict** (on demand) | Person Enrich `assessment.authenticity`: clearly genuine through clearly fabricated, tier 0–9. It costs no extra credits, but Crustdata enables the field per key. Ours returned 403 ("Access denied to fields: assessment"), so the button says so and the free checks still apply. |
 
 Verdicts are *trusted · ok · unconfirmed · needs review*. They're flags for a person to read, never accusations. Crustdata's own docs say the same about `probably_fabricated`.
 

@@ -64,8 +64,12 @@ class Crustdata:
             except urllib.error.HTTPError as e:
                 last = f"HTTP {e.code}"
                 if e.code in (401, 402, 403):
+                    try:
+                        detail = e.read().decode(errors="replace")[:300]
+                    except Exception:
+                        detail = ""
                     raise CrustdataError(f"{path}: HTTP {e.code} — not retryable "
-                                         "(check key, credits or endpoint access)") from e
+                                         f"(check key, credits or endpoint access) {detail}") from e
                 if e.code == 429 or e.code >= 500:
                     wait = float(e.headers.get("x-ratelimit-reset") or 2 ** attempt)
                     wait = min(max(wait, 1.0), 20.0)

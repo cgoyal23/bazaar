@@ -382,6 +382,11 @@ def deep_check(signal_id_):
         res = Crustdata()._post("/person/enrich", {"professional_network_profile_urls": [data["profile_url"]],
                                                    "fields": ["basic_profile.name", "assessment"]})
     except CrustdataError as e:
+        if "assessment" in str(e) or "403" in str(e):
+            msg = ("This Crustdata key has no grant for the `assessment` field (Crustdata enables it per key). "
+                   "The free consistency checks above still apply.")
+            store.event("trust", f"Deep check {data['name']}: {msg}")
+            return {"ok": False, "message": msg}
         return {"ok": False, "message": str(e)}
     store.usage("/person/enrich", 1, "authenticity")
     match = ((res[0].get("matches") or [{}])[0] if isinstance(res, list) and res else {}) or {}
