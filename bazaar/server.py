@@ -124,6 +124,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"killed": kill(parts[2])})
         elif len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "resume":
             self._json({"started": spawn(parts[2])})
+        elif len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "answer":
+            if alive(parts[2]):
+                return self._json({"ok": False, "message": "worker is still running"}, 409)
+            out = orchestrator.answer(parts[2], body.get("answers"))
+            if out["ok"]:
+                spawn(parts[2])
+            self._json(out, 200 if out["ok"] else 400)
         elif len(parts) == 4 and parts[:2] == ["api", "exceptions"] and parts[3] == "resolve":
             self._json(payments.resolve_exception(int(parts[2]), body.get("action", "")))
         else:

@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS ledger(
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, transfer_id TEXT UNIQUE NOT NULL,
   po_number TEXT, debit TEXT, credit TEXT, amount_paise INTEGER, memo TEXT, ts TEXT);
 CREATE TABLE IF NOT EXISTS api_cache(key TEXT PRIMARY KEY, endpoint TEXT, response TEXT, ts TEXT);
+CREATE TABLE IF NOT EXISTS answers(run_id TEXT, field TEXT, value TEXT, ts TEXT, PRIMARY KEY(run_id, field));
 CREATE TABLE IF NOT EXISTS workers(run_id TEXT PRIMARY KEY, pid INTEGER, started_at TEXT);
 """
 
@@ -222,6 +223,16 @@ class Store:
         reply = deliver(body)
         c.execute("UPDATE outbox SET reply=?, replied_at=? WHERE key=?", (dumps(reply), now(), key))
         return reply, False
+
+    # -- a human's answers to the Planner's questions
+    def answers(self):
+        return {r["field"]: r["value"] for r in conn().execute(
+            "SELECT field, value FROM answers WHERE run_id=?", (self.run_id,))}
+
+    def set_answers(self, answers: dict):
+        with tx() as c:
+            for field, value in answers.items():
+                c.execute("INSERT OR REPLACE INTO answers VALUES(?,?,?,?)", (self.run_id, field, value, now()))
 
     # -- documents
     def put_document(self, name, kind, body) -> str:

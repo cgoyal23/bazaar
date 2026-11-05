@@ -204,6 +204,53 @@ def _llm_fill(request: str, found: dict, today: datetime.date, notes: list):
             notes.append("budget read by Claude — please confirm")
 
 
+ASK = {
+    "item": ("What exactly should we buy, and how many units?", "5,000 leather laptop sleeves"),
+    "city": ("Which city should the goods be delivered to?", "Bengaluru"),
+    "deadline": ("By what date must the goods arrive?", "15 December"),
+    "budget": ("What is the maximum total budget (in rupees)?", "₹12 lakh"),
+}
+
+
+def _ask(field):
+    q, example = ASK[field]
+    return {"field": field, "question": q, "example": example}
+
+
+def _apply_answers(answers, found, evidence, today, notes, retry):
+    """A human's answer to a Planner question overrides what was read from the
+    request. Each answer is read with the same parser as that field, never guessed."""
+    for field, text in answers.items():
+        text = " ".join(str(text).split())
+        if not text:
+            continue
+        got = None
+        if field == "item":
+            q = parse_quantity_item(text)
+            if q:
+                found["quantity"], found["item"] = q["quantity"], q["item"]
+                got = q["text"]
+                evidence["quantity"] = evidence["item"] = f"{got} (answered)"
+        elif field == "city":
+            c = parse_city(text)
+            if c:
+                found["city"], got = c["city"], c["text"]
+        elif field == "deadline":
+            d = parse_deadline(text, today)
+            if d:
+                found["deadline"], got = d["date"], d["text"]
+        elif field == "budget":
+            b = parse_budget(text) or parse_budget("under " + text)
+            if b:
+                found["budget"], got = b, b["text"]
+        if got is None:
+            retry[field] = text
+        else:
+            if field != "item":
+                evidence[field] = f"{got} (answered)"
+            notes.append(f"{field} answered by a human")
+
+
 def plan(store, request: str):
     today = config.today()
     store.emit("Planner", "start", "Reading the request", {"request": request})
@@ -211,15 +258,21 @@ def plan(store, request: str):
     notes = []
     _llm_fill(request, found, today, notes)
 
-    questions = []
+    retry = {}
+    _apply_answers(store.answers(), found, evidence, today, notes, retry)
+
+    ask = []
     if "quantity" not in found or "item" not in found:
-        questions.append("What exactly should we buy, and how many units?")
+        ask.append(_ask("item"))
     if "city" not in found:
-        questions.append("Which city should the goods be delivered to?")
+        ask.append(_ask("city"))
     if "deadline" not in found:
-        questions.append("By what date must the goods arrive?")
+        ask.append(_ask("deadline"))
     if "budget" not in found:
-        questions.append("What is the maximum total budget (in rupees)?")
+        ask.append(_ask("budget"))
+    for a in ask:
+        if a["field"] in retry:
+            a["question"] = f"Could not read “{retry[a['field']]}”. " + a["question"]
 
     spec = {"status": "ok", "request": request, "today": today.isoformat(), "evidence": evidence,
             "notes": notes, "warnings": []}
@@ -234,7 +287,8 @@ def plan(store, request: str):
         spec["deadline"] = dl.isoformat()
         spec["days_to_deadline"] = (dl - today).days
         if dl <= today:
-            questions.append(f"The deadline {dl} is not in the future. What is the correct date?")
+            ask.append(dict(_ask("deadline"), question=f"The deadline {dl} is not in the future. "
+                                                         "What is the correct date?"))
         elif (dl - today).days < 10:
             spec["warnings"].append(f"Only {(dl - today).days} days to the deadline; few suppliers can make it.")
     if "budget" in found and "quantity" in found:
@@ -244,9 +298,11 @@ def plan(store, request: str):
         spec["unit_ceiling_paise"] = int(spec["budget_paise"] // found["quantity"])
         if bud["per_unit"]:
             notes.append("budget given per unit; total = unit price x quantity")
+    questions = [a["question"] for a in ask]
     if questions:
         spec["status"] = "needs_input"
         spec["questions"] = questions
+        spec["ask"] = ask
         store.emit("Planner", "needs_input", "Cannot plan without: " + " ".join(questions),
                    {"questions": questions, "parsed": {k: str(v) for k, v in found.items()}})
         return spec

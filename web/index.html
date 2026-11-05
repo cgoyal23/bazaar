@@ -91,6 +91,8 @@ pre{font:12px/1.5 var(--mono);background:#fbfaf7;border:1px solid var(--line);bo
 .kv div:nth-child(odd){color:var(--muted)}
 .empty{color:var(--muted);font-size:13px;font-style:italic}
 [hidden]{display:none!important}
+.answers label{display:block;font-size:13px;margin:8px 0 0}
+.answers input{display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;background:var(--panel);color:inherit}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:20;padding:16px}
 .modal .card{max-width:760px;width:100%;max-height:85vh;overflow:auto}
 .hidden-ins{font-size:13px;border-left:3px solid var(--bad);padding:4px 10px;margin:6px 0 12px;background:var(--badbg)}
@@ -236,7 +238,7 @@ function renderPipeline(s){
 
 function renderPlan(s){
   const p = s.outputs.plan; if (!p) return;
-  if (p.status !== "ok"){ $("plan").innerHTML = `<div class="badge b-warn">needs input</div><ul>${p.questions.map(q=>`<li>${esc(q)}</li>`).join("")}</ul><div class="small">Edit the request above and run again.</div>`; return; }
+  if (p.status !== "ok"){ $("plan").innerHTML = `<div class="badge b-warn">needs input</div><ul>${p.questions.map(q=>`<li>${esc(q)}</li>`).join("")}</ul><div class="small"><b>Type your answers under “Exceptions for a human”</b> — the same run continues from there.</div>`; return; }
   $("plan").className="";
   $("plan").innerHTML = `<div class="kv">
     <div>Item</div><div><b>${p.quantity.toLocaleString("en-IN")} × ${esc(p.item)}</b></div>
@@ -302,19 +304,38 @@ function renderPayments(s){
     <table style="margin-top:8px"><tr><th>Ledger</th><th>Debit</th><th>Credit</th><th>Amount</th></tr>${s.ledger.map(l=>`<tr><td class="small">#${l.id} ${esc(l.po_number)}</td><td>${esc(l.debit)}</td><td>${esc(l.credit)}</td><td><b>${inr(l.amount_paise)}</b></td></tr>`).join("") || `<tr><td colspan=4 class="small">not posted yet</td></tr>`}</table>`;
 }
 
+let excSig = "";
 function renderExceptions(s){
   $("excCount").textContent = s.exceptions.filter(x=>x.status==="open").length;
   if (!s.exceptions.length) return;
+  // redraw only when exceptions change, so typed answers are not wiped by polling
+  const sig = JSON.stringify(s.exceptions.map(x=>[x.id,x.status,x.resolution])) + s.run.status + s.alive;
+  if (sig === excSig) return;
+  excSig = sig;
   $("exceptions").innerHTML = s.exceptions.map(x=>{
     const failed = (x.detail.checks||[]).filter(c=>!c.ok);
     return `<div class="exc ${x.status}"><b>#${x.id} ${esc(x.title)}</b> <span class="badge ${x.status==="open"?"b-bad":"b-ok"}">${x.status}</span>
       ${x.detail.invoice?`<div class="small">From ${esc(x.detail.invoice.from_email)}: “${esc(x.detail.invoice.text)}”</div>`:""}
       ${failed.length?`<ul class="checks">${failed.map(c=>`<li><span>⛔</span><span>${esc(c.detail)}</span></li>`).join("")}</ul>`:""}
-      ${x.detail.questions?`<ul>${x.detail.questions.map(q=>`<li>${esc(q)}</li>`).join("")}</ul>`:""}
+      ${x.kind==="needs_input" && x.status==="open" && x.detail.ask ? answerForm(x, s) :
+        x.detail.questions?`<ul>${x.detail.questions.map(q=>`<li>${esc(q)}</li>`).join("")}</ul>`:""}
       ${x.detail.recommended_action?`<div class="small"><b>Recommended:</b> ${esc(x.detail.recommended_action)}</div>`:""}
       ${x.resolution?`<div class="small" style="margin-top:4px"><b>Resolution:</b> ${esc(x.resolution)}</div>`:""}
       ${x.status==="open" && x.kind==="bank_change" ? `<div class="acts"><button class="danger" onclick="resolveExc(${x.id},'reject')">Reject as fraud</button><button onclick="resolveExc(${x.id},'approve')">Approve bank change & pay</button></div>`:""}</div>`;
   }).join("");
+}
+function answerForm(x, s){
+  return `<form class="answers" onsubmit="sendAnswers(event)">
+    ${x.detail.ask.map(a=>`<label>${esc(a.question)}<input name="${esc(a.field)}" placeholder="e.g. ${esc(a.example)}" autocomplete="off"></label>`).join("")}
+    <div class="acts"><button class="primary" type="submit" ${s.alive?"disabled":""}>Send answers & continue →</button><span class="small" id="ansMsg"></span></div></form>`;
+}
+async function sendAnswers(ev){
+  ev.preventDefault();
+  const answers = Object.fromEntries([...new FormData(ev.target)].filter(([k,v])=>v.trim()));
+  if (!Object.keys(answers).length){ $("ansMsg").textContent = "Type at least one answer."; return; }
+  const r = await fetch(`/api/runs/${runId}/answer`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({answers})}).then(r=>r.json());
+  if (!r.ok){ $("ansMsg").textContent = r.message; return; }
+  excSig = ""; poll();
 }
 async function resolveExc(id, action){ await fetch(`/api/exceptions/${id}/resolve`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action})}); poll(); }
 

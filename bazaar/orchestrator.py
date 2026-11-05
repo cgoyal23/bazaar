@@ -21,6 +21,31 @@ def _hand_over(store, run_id, kind, title, detail):
     return "needs_human"
 
 
+def answer(run_id: str, answers: dict):
+    """A human answers the Planner's open questions. The answers are stored, the
+    plan step is reset, and the same run continues (the caller restarts the worker)."""
+    r = db.get_run(run_id)
+    if not r:
+        return {"ok": False, "message": "no such run"}
+    if r["status"] != "needs_input":
+        return {"ok": False, "message": f"run is {r['status']}, not waiting for answers"}
+    answers = {k: str(v).strip()[:300] for k, v in (answers or {}).items()
+               if k in planner.ASK and str(v).strip()}
+    if not answers:
+        return {"ok": False, "message": "no answers given"}
+    store = db.Store(run_id)
+    store.set_answers(answers)
+    c = db.conn()
+    c.execute("UPDATE exceptions SET status='resolved', resolution=?, resolved_at=? "
+              "WHERE run_id=? AND kind='needs_input' AND status='open'",
+              ("Answered: " + "; ".join(f"{k} = {v}" for k, v in answers.items()), db.now(), run_id))
+    c.execute("DELETE FROM steps WHERE run_id=? AND name='plan'", (run_id,))
+    store.emit("Human", "answer", "Answered the Planner: " + "; ".join(f"{k}: “{v}”" for k, v in answers.items()),
+               {"answers": answers}, pace=False)
+    db.set_run_status(run_id, "queued")
+    return {"ok": True}
+
+
 def run(run_id: str):
     store = db.Store(run_id)
     r = db.get_run(run_id)
@@ -35,8 +60,9 @@ def run(run_id: str):
 
     spec = store.run_step("plan", lambda: planner.plan(store, r["request"]))
     if spec["status"] != "ok":
-        store.raise_exception("needs_input", "Planner needs more information", {"questions": spec["questions"]},
-                              f"{run_id}:needs_input")
+        n = sum(1 for e in store.exceptions() if e["kind"] == "needs_input")
+        store.raise_exception("needs_input", "Planner needs more information",
+                              {"questions": spec["questions"], "ask": spec["ask"]}, f"{run_id}:needs_input:{n}")
         db.set_run_status(run_id, "needs_input")
         return "needs_input"
 

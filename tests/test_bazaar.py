@@ -1,5 +1,6 @@
 """Run with:  python3 -m unittest discover -s tests -v"""
 import datetime
+import json
 import os
 import pathlib
 import subprocess
@@ -68,6 +69,33 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(orchestrator.run(run_id), "needs_input")
         exc = db.Store(run_id).exceptions()
         self.assertEqual(exc[0]["kind"], "needs_input")
+
+
+class HumanAnswers(Fresh):
+    def test_answers_resume_the_same_run(self):
+        run_id, status = self.run_purchase("We need leather laptop sleeves for the office in Bengaluru, quickly")
+        self.assertEqual(status, "needs_input")
+        asked = {a["field"] for a in json.loads(db.Store(run_id).exceptions()[0]["detail"])["ask"]}
+        self.assertEqual(asked, {"item", "deadline", "budget"})  # city was in the request
+
+        # an unreadable answer is asked again, not guessed
+        self.assertTrue(orchestrator.answer(run_id, {"item": "5000 leather laptop sleeves",
+                                                     "deadline": "soon", "budget": "12 lakh"})["ok"])
+        self.assertEqual(orchestrator.run(run_id), "needs_input")
+        exc = [e for e in db.Store(run_id).exceptions() if e["status"] == "open"]
+        self.assertEqual(len(exc), 1)
+        self.assertIn("Could not read “soon”", json.loads(exc[0]["detail"])["questions"][0])
+
+        self.assertTrue(orchestrator.answer(run_id, {"deadline": "15 Dec"})["ok"])
+        self.assertEqual(orchestrator.run(run_id), "completed")
+        plan = db.Store(run_id).step_done("plan")
+        self.assertEqual((plan["quantity"], plan["delivery_city"], plan["deadline"], plan["budget_paise"]),
+                         (5000, "Bengaluru", "2026-12-15", 12_00_000_00))
+        self.assertIn("(answered)", plan["evidence"]["deadline"])
+
+    def test_answer_rejected_unless_waiting(self):
+        run_id, _ = self.run_purchase()
+        self.assertFalse(orchestrator.answer(run_id, {"city": "Pune"})["ok"])
 
 
 class EndToEnd(Fresh):

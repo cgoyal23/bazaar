@@ -36,7 +36,7 @@ PO-xxxx-02 countersigned with Sarvaka Leather Co. — 5,000 × ₹229 = ₹11,45
 | **Payments** | Matches the invoice against the PO, the vendor master and a penny drop, then pays the advance with an idempotency key and posts a double-entry ledger line | Exactly-once payment through a payment intent, a bank that honours idempotency keys, and a ledger that is UNIQUE per transfer. A bank-detail change is **always** held for a human. |
 | **Auditor** | Links every decision to its evidence, re-derives every number, checks contradictions, and verifies the hash-chained event log | It recomputes from raw records instead of trusting the other agents' summaries |
 
-**Where a human is still needed:** missing request fields, a bank-detail change, payments above the auto-pay limit (₹5 lakh), and the case where no supplier signs as agreed. Those are the cases where a person's answer changes the result.
+**Where a human is still needed:** missing request fields, a bank-detail change, payments above the auto-pay limit (₹5 lakh), and the case where no supplier signs as agreed. Those are the cases where a person's answer changes the result. When the Planner is missing a field, the **Exceptions for a human** card shows one answer box per question. Each answer is read with that field's own parser, so an unreadable answer such as "soon" is asked again, not guessed. The same run then continues.
 
 ## The hostile test world
 
@@ -71,7 +71,7 @@ No install: Python 3.10+ standard library only.
 python3 run.py serve                 # http://localhost:8000: live timeline, kill/restart, exceptions
 python3 run.py demo                  # same purchase, in the terminal
 python3 run.py demo --crash-at-payment   # kill right after the bank moves money, resume, prove it paid once
-python3 -m unittest discover -s tests -v # 15 tests
+python3 -m unittest discover -s tests -v # 17 tests
 ```
 
 Optional keys (everything runs without them):
@@ -139,7 +139,7 @@ flowchart LR
 
 **Hardest case:** a kill *after* the bank has moved the money but *before* the ledger is written. The bank has paid and our books don't know it. The fix is that the bank honours the idempotency key, and the resumed step asks the bank first, finds the transfer, and only posts the missing ledger line.
 
-**How we tested it:** `tests/test_bazaar.py` has 15 tests. They cover the parser on four wordings of the same request, crore amounts and year rollover, and missing fields going to a human. They run the full purchase and assert every trap is caught. They make a **real subprocess crash** (exit 137) after the transfer, then resume and assert exactly 1 transfer, 1 ledger entry and no duplicate messages. They also cover a re-run being a no-op, bank idempotency conflicts, hash-chain tamper detection, approval of the fraud being refused, the same deal at the same price whatever the budget, an item no supplier makes going to a human, an order no supplier can verifiably deliver going to a human, the real-company verdicts on Crustdata-shaped records (including one with no record and one with no headcount), and a check that buyer agents never read supplier internals.
+**How we tested it:** `tests/test_bazaar.py` has 17 tests. They cover the parser on four wordings of the same request, crore amounts and year rollover, missing fields going to a human, and a human's answers resuming the same run (an unreadable answer is asked again). They run the full purchase and assert every trap is caught. They make a **real subprocess crash** (exit 137) after the transfer, then resume and assert exactly 1 transfer, 1 ledger entry and no duplicate messages. They also cover a re-run being a no-op, bank idempotency conflicts, hash-chain tamper detection, approval of the fraud being refused, the same deal at the same price whatever the budget, an item no supplier makes going to a human, an order no supplier can verifiably deliver going to a human, the real-company verdicts on Crustdata-shaped records (including one with no record and one with no headcount), and a check that buyer agents never read supplier internals.
 
 ## What we left out to ship in eight hours
 
