@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bazaar — AI procurement department</title>
+<style>
+:root{
+  --bg:#f6f5f1; --panel:#ffffff; --ink:#1c1b19; --muted:#6b6862; --line:#e4e1da; --soft:#f1efe9;
+  --accent:#3b5bdb; --ok:#2b8a3e; --okbg:#ebfbee; --bad:#c92a2a; --badbg:#fff5f5; --warn:#b35c00; --warnbg:#fff4e6;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:14px 22px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+.logo{font-weight:800;font-size:20px;letter-spacing:-.02em}
+.logo span{color:var(--accent)}
+.tag{color:var(--muted)}
+.chips{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-size:12px;padding:3px 9px;border-radius:99px;background:var(--soft);border:1px solid var(--line);color:var(--muted)}
+.chip b{color:var(--ink);font-weight:600}
+main{padding:16px 22px;max-width:1500px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px;font-weight:700;display:flex;align-items:center;gap:8px}
+h2 .n{font-size:11px;background:var(--soft);border-radius:99px;padding:1px 7px;letter-spacing:0}
+.req{display:grid;grid-template-columns:1fr auto;gap:10px}
+textarea{width:100%;min-height:58px;font:15px/1.4 inherit;padding:10px 12px;border:1px solid var(--line);border-radius:8px;resize:vertical;background:#fff;color:var(--ink)}
+button{font:600 13px inherit;padding:9px 14px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
+button:hover{border-color:#bbb}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;padding:10px 20px;font-size:14px}
+button.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+button.ghost{background:transparent}
+button:disabled{opacity:.45;cursor:not-allowed}
+.samples{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.samples button{font-weight:500;font-size:12px;padding:4px 10px;color:var(--muted)}
+.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0}
+.pill{font:600 12px var(--mono);padding:4px 10px;border-radius:99px;background:var(--soft);border:1px solid var(--line)}
+.pill.running{background:#e7f0ff;color:var(--accent);border-color:#c5d6ff}
+.pill.completed{background:var(--okbg);color:var(--ok);border-color:#b2f2bb}
+.pill.killed,.pill.failed{background:var(--badbg);color:var(--bad);border-color:#ffc9c9}
+.pill.needs_input,.pill.needs_human{background:var(--warnbg);color:var(--warn);border-color:#ffd8a8}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;background:#bbb;margin-right:5px}
+.dot.on{background:var(--ok);box-shadow:0 0 0 0 rgba(43,138,62,.5);animation:pulse 1.4s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 7px rgba(43,138,62,0)}100%{box-shadow:0 0 0 0 rgba(43,138,62,0)}}
+.killnow{animation:throb .8s infinite alternate}
+@keyframes throb{to{box-shadow:0 0 0 6px rgba(201,42,42,.25)}}
+.pipeline{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin-bottom:14px}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;position:relative}
+.stage b{display:block;font-size:13px}
+.stage .s{color:var(--muted)}
+.stage.active{border-color:var(--accent);box-shadow:inset 0 -3px 0 var(--accent)}
+.stage.done{box-shadow:inset 0 -3px 0 var(--ok)}
+.stage.alert{box-shadow:inset 0 -3px 0 var(--bad)}
+.grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:14px;align-items:start}
+.col{display:flex;flex-direction:column;gap:14px;min-width:0}
+.timeline{height:calc(100vh - 330px);min-height:420px;overflow:auto;padding-right:4px}
+.ev{display:grid;grid-template-columns:58px 96px 1fr;gap:8px;padding:5px 0;border-bottom:1px dashed var(--line);font-size:13px}
+.ev .t{font:11px var(--mono);color:var(--muted);padding-top:2px}
+.ag{font:700 11px inherit;padding:2px 7px;border-radius:5px;height:fit-content;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ev.k-block .m,.ev.k-hold .m,.ev.k-mismatch .m,.ev.k-crash .m,.ev.k-refuse .m{color:var(--bad);font-weight:600}
+.ev.k-recover .m,.ev.k-resume .m{color:var(--accent);font-weight:600}
+.ev.k-signed .m,.ev.k-ledger .m,.ev.k-done .m{color:var(--ok)}
+.ev.k-settling .m{color:var(--warn);font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;padding:4px 6px;border-bottom:1px solid var(--line)}
+td{padding:6px;border-bottom:1px solid var(--soft);vertical-align:top}
+.badge{font:700 11px inherit;padding:2px 8px;border-radius:99px;white-space:nowrap}
+.b-PASS,.b-APPROVE,.b-ok{background:var(--okbg);color:var(--ok)}
+.b-REJECT,.b-BLOCK,.b-bad{background:var(--badbg);color:var(--bad)}
+.b-UNVERIFIABLE,.b-warn{background:var(--warnbg);color:var(--warn)}
+.small{font-size:12px;color:var(--muted)}
+details summary{cursor:pointer}
+.checks{margin:6px 0 2px;padding:0;list-style:none}
+.checks li{font-size:12px;padding:2px 0;display:grid;grid-template-columns:18px 1fr}
+.src{color:var(--muted);font-size:11px}
+.negos{display:grid;gap:10px}
+.nego{border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.nego .hd{display:flex;justify-content:space-between;font-weight:600;margin-bottom:4px}
+.lane{display:grid;grid-template-columns:62px 1fr;gap:6px;font-size:12px;padding:2px 0;align-items:center}
+.lane .l{color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.05em}
+.rounds{display:flex;gap:4px;flex-wrap:wrap}
+.rd{font:11px var(--mono);background:var(--soft);border-radius:4px;padding:1px 5px}
+.rd.agreed,.rd.accept{background:var(--okbg);color:var(--ok);font-weight:700}
+.rd.no_deal,.rd.reject{background:var(--badbg);color:var(--bad);font-weight:700}
+pre{font:12px/1.5 var(--mono);background:#fbfaf7;border:1px solid var(--line);border-radius:8px;padding:10px;white-space:pre-wrap;margin:6px 0 0;max-height:340px;overflow:auto}
+.diff{color:var(--bad);font:12px var(--mono)}
+.exc{border:1px solid #ffc9c9;background:var(--badbg);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.exc.resolved{border-color:var(--line);background:var(--soft)}
+.exc .acts{display:flex;gap:8px;margin-top:8px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:3px 12px;font-size:13px}
+.kv div:nth-child(odd){color:var(--muted)}
+.empty{color:var(--muted);font-size:13px;font-style:italic}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:20;padding:16px}
+.modal .card{max-width:760px;width:100%;max-height:85vh;overflow:auto}
+.hidden-ins{font-size:13px;border-left:3px solid var(--bad);padding:4px 10px;margin:6px 0 12px;background:var(--badbg)}
+.big{font-size:22px;font-weight:800;letter-spacing:-.02em}
+@media (max-width:1050px){.grid{grid-template-columns:1fr}.pipeline{grid-template-columns:repeat(4,1fr)}.timeline{height:420px}}
+@media (max-width:560px){main{padding:12px}.pipeline{grid-template-columns:repeat(2,1fr)}.req{grid-template-columns:1fr}.ev{grid-template-columns:50px 1fr}.ev .ag{display:none}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Baz<span>aar</span></div>
+  <div class="tag">An AI procurement department: from request to signed PO and safe advance</div>
+  <div class="chips" id="modeChips"></div>
+</header>
+<main>
+  <div class="card">
+    <div class="req">
+      <textarea id="req">We need 5,000 leather laptop sleeves in Bengaluru by 15 December, under ₹12 lakh.</textarea>
+      <button class="primary" id="go">Run purchase →</button>
+    </div>
+    <div class="samples">
+      <span class="small" style="align-self:center">Try:</span>
+      <button data-s="We need 5,000 leather laptop sleeves in Bengaluru by 15 December, under ₹12 lakh.">Example request</button>
+      <button data-s="pls arrange 5k leather sleeves for laptops, deliver bangalore before Dec 15th, budget 12L max">Messy wording</button>
+      <button data-s="5000 13-inch leather laptop sleeves delivered in Bengaluru by 2026-12-15 at max ₹240 per unit">Per-unit budget</button>
+      <button data-s="We need leather laptop sleeves for the office in Bengaluru, quickly">Missing fields</button>
+    </div>
+  </div>
+
+  <div class="bar" id="bar" hidden>
+    <span class="pill" id="status">—</span>
+    <span class="small"><span class="dot" id="dot"></span><span id="workerTxt">worker</span></span>
+    <span class="small" id="runId"></span>
+    <span class="small" id="chain"></span>
+    <span style="flex:1"></span>
+    <button class="danger" id="kill">Kill worker (SIGKILL)</button>
+    <button id="resume">Restart worker</button>
+    <button class="ghost" id="reveal">Reveal test world</button>
+  </div>
+
+  <div class="pipeline" id="pipeline" hidden></div>
+
+  <div class="grid" id="grid" hidden>
+    <div class="col">
+      <div class="card"><h2>Live timeline <span class="n" id="evCount">0</span></h2><div class="timeline" id="timeline"></div></div>
+    </div>
+    <div class="col">
+      <div class="card" id="outcome" hidden></div>
+      <div class="card"><h2>Exceptions for a human <span class="n" id="excCount">0</span></h2><div id="exceptions"><div class="empty">None yet. Bazaar asks a person only when the answer changes the result.</div></div></div>
+      <div class="card"><h2>Plan</h2><div id="plan" class="empty">Waiting for the Planner…</div></div>
+      <div class="card"><h2>Suppliers &amp; verification</h2><div id="suppliers" class="empty">Waiting for bids…</div></div>
+      <div class="card"><h2>Negotiations (parallel)</h2><div id="negos" class="negos"><div class="empty">Starts after verification.</div></div></div>
+      <div class="card"><h2>Contract</h2><div id="contract" class="empty">Starts after the Risk Officer approves deals.</div></div>
+      <div class="card"><h2>Payments: bank &amp; ledger</h2><div id="payments" class="empty">Nothing paid.</div></div>
+      <div class="card"><h2>Audit trail</h2><div id="audit" class="empty">Runs last.</div></div>
+    </div>
+  </div>
+</main>
+
+<div class="modal" id="modal" hidden><div class="card" id="modalBody"></div></div>
+
+<script>
+const AGENTS = [
+  ["Planner","plan","#5f3dc4","#f3f0ff"],["Scout","scout","#1971c2","#e7f5ff"],["Verifier","verify","#0b7285","#e3fafc"],
+  ["Negotiator","negotiate","#b35c00","#fff4e6"],["Risk Officer","risk_review","#c92a2a","#fff5f5"],
+  ["Contract","contract","#2b8a3e","#ebfbee"],["Payments","payment_advance","#364fc7","#edf2ff"],["Auditor","audit","#495057","#f1f3f5"]];
+const COLORS = Object.fromEntries(AGENTS.map(a=>[a[0],[a[2],a[3]]]));
+COLORS["System"]=["#212529","#e9ecef"]; COLORS["Human"]=["#862e9c","#f8f0fc"];
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const inr = p => p==null ? "—" : "₹" + (p/100).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
+let runId = null, lastId = 0, events = [], timer = null, S = null;
+
+document.querySelectorAll(".samples button[data-s]").forEach(b => b.onclick = () => { $("req").value = b.dataset.s; });
+$("go").onclick = async () => {
+  const r = await fetch("/api/runs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({request:$("req").value})}).then(r=>r.json());
+  if (r.run_id) start(r.run_id);
+};
+$("kill").onclick = () => fetch(`/api/runs/${runId}/kill`,{method:"POST"});
+$("resume").onclick = () => fetch(`/api/runs/${runId}/resume`,{method:"POST"});
+$("reveal").onclick = async () => {
+  const r = await fetch("/api/testworld").then(r=>r.json());
+  $("modalBody").innerHTML = `<h2>The hostile test world <button class="ghost" style="margin-left:auto" onclick="$('modal').hidden=true">Close</button></h2>
+   <p class="small">Every supplier is a fictional simulated agent on a reserved <code>.example</code> domain. Bazaar's buyer agents
+   only see what suppliers say; they never see these instructions.</p>` +
+   r.suppliers.map(s=>`<div><b>${esc(s.supplier)}</b> <span class="badge b-warn">${esc(s.role)}</span>
+   <div class="hidden-ins">${esc(s.hidden_instructions)}</div></div>`).join("");
+  $("modal").hidden = false;
+};
+$("modal").onclick = e => { if (e.target.id==="modal") $("modal").hidden = true; };
+
+function start(id){
+  runId = id; lastId = 0; events = []; $("timeline").innerHTML = "";
+  ["bar","pipeline","grid"].forEach(x=>$(x).hidden=false);
+  history.replaceState(null,"","#"+id);
+  clearInterval(timer); poll(); timer = setInterval(poll, 700);
+}
+
+async function poll(){
+  let s; try { s = await fetch(`/api/runs/${runId}/state?after=${lastId}`).then(r=>r.json()); } catch(e){ return; }
+  if (s.error) return;
+  S = s;
+  for (const e of s.events){ events.push(e); lastId = e.id; addEvent(e); }
+  render(s);
+}
+
+function addEvent(e){
+  const [fg,bg] = COLORS[e.agent] || ["#333","#eee"];
+  const el = document.createElement("div");
+  el.className = `ev k-${e.kind}`;
+  el.innerHTML = `<div class="t">${new Date(e.ts).toLocaleTimeString("en-GB",{hour12:false})}</div><div class="ag" style="color:${fg};background:${bg}">${esc(e.agent)}</div><div class="m">${esc(e.message)}</div>`;
+  const tl = $("timeline"); const stick = tl.scrollHeight - tl.scrollTop - tl.clientHeight < 60;
+  tl.appendChild(el); if (stick) tl.scrollTop = tl.scrollHeight;
+  $("evCount").textContent = events.length;
+}
+
+function render(s){
+  const st = s.run.status;
+  $("status").className = "pill " + st; $("status").textContent = st;
+  $("dot").className = "dot" + (s.alive ? " on" : "");
+  $("workerTxt").textContent = s.alive ? "worker running" : "worker stopped";
+  $("runId").textContent = "run " + s.run.id;
+  $("chain").textContent = (s.chain.ok ? "🔗 hash chain intact" : "⚠️ hash chain broken") + ` · ${s.chain.events} events`;
+  $("kill").disabled = !s.alive; $("resume").disabled = s.alive || st==="completed";
+  const lastPay = [...events].reverse().find(e=>e.agent==="Payments");
+  $("kill").classList.toggle("killnow", s.alive && lastPay && lastPay.kind==="settling");
+  $("modeChips").innerHTML = `<span class="chip">Crustdata <b>${esc(s.mode.crustdata)}</b></span><span class="chip">LLM <b>${esc(s.mode.llm)}</b></span>`;
+  renderPipeline(s); renderPlan(s); renderSuppliers(s); renderNegos(s); renderContract(s); renderPayments(s); renderExceptions(s); renderAudit(s); renderOutcome(s);
+}
+
+function renderPipeline(s){
+  const done = new Set(s.steps.filter(x=>x.status==="done").map(x=>x.name));
+  const seen = new Set(events.map(e=>e.agent));
+  const alerts = new Set(events.filter(e=>["block","hold","mismatch"].includes(e.kind)).map(e=>e.agent));
+  const lastAgent = [...events].reverse().find(e=>COLORS[e.agent] && e.agent!=="System")?.agent;
+  $("pipeline").innerHTML = AGENTS.map(([name,step])=>{
+    const isDone = done.has(step); const active = s.alive && lastAgent===name;
+    const cls = active ? "active" : alerts.has(name) ? "alert" : isDone ? "done" : "";
+    const n = events.filter(e=>e.agent===name).length;
+    return `<div class="stage ${cls}"><b>${name}</b><span class="s">${active?"working…":isDone?"done":seen.has(name)?"in progress":"waiting"} · ${n}</span></div>`;
+  }).join("");
+}
+
+function renderPlan(s){
+  const p = s.outputs.plan; if (!p) return;
+  if (p.status !== "ok"){ $("plan").innerHTML = `<div class="badge b-warn">needs input</div><ul>${p.questions.map(q=>`<li>${esc(q)}</li>`).join("")}</ul><div class="small">Edit the request above and run again.</div>`; return; }
+  $("plan").className="";
+  $("plan").innerHTML = `<div class="kv">
+    <div>Item</div><div><b>${p.quantity.toLocaleString("en-IN")} × ${esc(p.item)}</b></div>
+    <div>Deliver to</div><div>${esc(p.delivery_city)} by <b>${p.deadline}</b> (must land by ${p.latest_acceptable_delivery})</div>
+    <div>Budget</div><div><b>${inr(p.budget_paise)}</b> · ceiling ${inr(p.unit_ceiling_paise)}/unit</div>
+    <div>Read from</div><div class="small">${Object.entries(p.evidence).map(([k,v])=>`${k}: “${esc(v)}”`).join(" · ")}</div>
+    <div>Assumed</div><div class="small">${p.specification.assumed.concat(p.assumptions).map(esc).join("<br>")}</div></div>`;
+}
+
+function renderSuppliers(s){
+  const bids = events.filter(e=>e.kind==="bid").map(e=>e.data.bid);
+  if (!bids.length) return;
+  const verdicts = {}; events.filter(e=>e.kind==="verdict").forEach(e=>verdicts[e.data.supplier]=e.data);
+  const merged = events.filter(e=>e.kind==="dedupe").map(e=>e.data.aliases);
+  const mergedAway = new Set(merged.flatMap(a=>a.slice(1)));
+  const rows = bids.filter(b=>!mergedAway.has(b.company_name)).sort((a,b)=>a.unit_price_inr-b.unit_price_inr).map(b=>{
+    const v = verdicts[b.company_name]; const alias = merged.find(a=>a[0]===b.company_name);
+    const checks = v ? `<details><summary class="small">${v.checks.filter(c=>c.ok===false).length} failed / ${v.checks.length} checks · evidence</summary><ul class="checks">${
+      v.checks.map(c=>`<li><span>${c.ok===true?"✅":c.ok===false?"⛔":"❔"}</span><span>${esc(c.detail)} <span class="src">— ${esc(c.source)} · fact #${c.fact_id}</span></span></li>`).join("")}</ul></details>` : "";
+    return `<tr><td><b>${esc(b.company_name)}</b>${alias?`<div class="small">also bid as “${esc(alias.slice(1).join(", "))}” → merged</div>`:""}<div class="small">${esc(b.contact_email)} · ${esc(b.city)}</div>${checks}</td>
+      <td>₹${b.unit_price_inr}<div class="small">claims ${b.claimed_capacity_month.toLocaleString("en-IN")}/mo</div></td>
+      <td>${v?`<span class="badge b-${v.verdict}">${v.verdict}</span>`:`<span class="small">checking…</span>`}</td></tr>`;
+  }).join("");
+  const real = (s.outputs.verify?.real_companies || s.outputs.scout?.real_companies || []);
+  $("suppliers").className="";
+  $("suppliers").innerHTML = `<table><tr><th>Supplier (fictional, sandbox)</th><th>Bid</th><th>Verdict</th></tr>${rows}</table>` +
+    (real.length ? `<div style="margin-top:10px"><b class="small">Real companies found on Crustdata (reference only — never contacted)</b><table>${real.map(r=>`<tr><td>${esc(r.name)} <span class="small">${esc(r.domain||"")}</span></td><td class="small">headcount ${r.headcount??"?"} · founded ${r.year_founded??"?"}</td><td><span class="badge b-ok">${esc(r.verdict||"found")}</span></td></tr>`).join("")}</table></div>` : "");
+}
+
+function renderNegos(s){
+  const ev = events.filter(e=>e.kind==="nego");
+  if (!ev.length) return;
+  const by = {};
+  ev.forEach(e=>{ const d=e.data; (by[d.supplier] ??= {price:[],delivery:[],payment:[]})[d.track].push(d); });
+  const deals = Object.fromEntries(events.filter(e=>e.kind==="deal").map(e=>[e.data.deal.supplier,e.data.deal]));
+  const reviews = Object.fromEntries((s.outputs.risk_review?.reviews||[]).map(r=>[r.supplier,r]));
+  const fmt = (t,v) => v==null?"":(t==="price"?"₹"+v:t==="payment"?v+"%":String(v).slice(5));
+  $("negos").innerHTML = Object.entries(by).map(([sup,tr])=>{
+    const d = deals[sup], r = reviews[sup];
+    return `<div class="nego"><div class="hd"><span>${esc(sup)}</span>${r?`<span class="badge b-${r.decision}">${r.decision==="BLOCK"?"BLOCKED: "+esc(r.reasons[0]):"APPROVED"}</span>`:d?`<span class="small">${d.total_paise?inr(d.total_paise):"no deal"}</span>`:`<span class="small">negotiating…</span>`}</div>
+      ${["price","delivery","payment"].map(t=>`<div class="lane"><span class="l">${t}</span><span class="rounds">${tr[t].map(x=>
+        x.reply==="agreed"||x.reply==="accept" ? `<span class="rd agreed">✓ ${fmt(t,x.supplier_value)}</span>` :
+        x.reply==="no_deal"||x.reply==="reject" ? `<span class="rd reject">✗ ${fmt(t,x.supplier_value)}</span>` :
+        `<span class="rd">${fmt(t,x.buyer)} → ${fmt(t,x.supplier_value)}</span>`).join("")}</span></div>`).join("")}</div>`;
+  }).join("");
+}
+
+function renderContract(s){
+  const c = s.outputs.contract;
+  const mism = events.filter(e=>e.kind==="mismatch");
+  if (!c && !mism.length) { const po = events.filter(e=>e.kind==="po").pop(); if (po) $("contract").innerHTML = `<div class="small">${esc(po.message)}</div>`; return; }
+  $("contract").className="";
+  const voided = (c?.voided || []).map(v=>`<div class="exc" style="margin-top:6px"><b>VOIDED ${esc(v.po_number)} — ${esc(v.supplier)}</b>${v.diffs.map(d=>`<div class="diff">${esc(d.field.replace("_paise","").replace("_"," "))}: agreed ${d.field.endsWith("_paise")?inr(d.agreed):esc(d.agreed)} → signed copy ${d.field.endsWith("_paise")?inr(d.in_signed_copy):esc(d.in_signed_copy)}</div>`).join("")}</div>`).join("");
+  const mismLive = !c ? mism.map(e=>`<div class="exc">${esc(e.message)}</div>`).join("") : "";
+  $("contract").innerHTML = mismLive + voided + (c?.status==="signed" ? `<div style="margin-top:8px"><span class="badge b-ok">SIGNED</span> <b>${esc(c.po_number)}</b> · ${esc(c.supplier)} · <span class="small">SHA-256 ${c.sha256.slice(0,20)}…</span><pre>${esc(c.signed_text)}</pre></div>` : "");
+}
+
+function renderPayments(s){
+  if (!s.transfers.length && !s.outputs.payment_advance) { const p=events.filter(e=>e.agent==="Payments").pop(); if(p) $("payments").innerHTML=`<div class="small">${esc(p.message)}</div>`; return; }
+  $("payments").className="";
+  $("payments").innerHTML = `<div class="kv" style="margin-bottom:8px"><div>Bank transfers for this run</div><div class="big">${s.transfers.length}</div></div>
+    <table><tr><th>Bank transfer</th><th>Idempotency key</th><th>Amount</th><th>To</th></tr>${s.transfers.map(t=>`<tr><td>${t.id}</td><td class="small">${esc(t.idempotency_key)}</td><td><b>${inr(t.amount_paise)}</b></td><td class="small">${esc(t.beneficiary)} …${t.account.slice(-4)}</td></tr>`).join("")}</table>
+    <table style="margin-top:8px"><tr><th>Ledger</th><th>Debit</th><th>Credit</th><th>Amount</th></tr>${s.ledger.map(l=>`<tr><td class="small">#${l.id} ${esc(l.po_number)}</td><td>${esc(l.debit)}</td><td>${esc(l.credit)}</td><td><b>${inr(l.amount_paise)}</b></td></tr>`).join("") || `<tr><td colspan=4 class="small">not posted yet</td></tr>`}</table>`;
+}
+
+function renderExceptions(s){
+  $("excCount").textContent = s.exceptions.filter(x=>x.status==="open").length;
+  if (!s.exceptions.length) return;
+  $("exceptions").innerHTML = s.exceptions.map(x=>{
+    const failed = (x.detail.checks||[]).filter(c=>!c.ok);
+    return `<div class="exc ${x.status}"><b>#${x.id} ${esc(x.title)}</b> <span class="badge ${x.status==="open"?"b-bad":"b-ok"}">${x.status}</span>
+      ${x.detail.invoice?`<div class="small">From ${esc(x.detail.invoice.from_email)}: “${esc(x.detail.invoice.text)}”</div>`:""}
+      ${failed.length?`<ul class="checks">${failed.map(c=>`<li><span>⛔</span><span>${esc(c.detail)}</span></li>`).join("")}</ul>`:""}
+      ${x.detail.questions?`<ul>${x.detail.questions.map(q=>`<li>${esc(q)}</li>`).join("")}</ul>`:""}
+      ${x.detail.recommended_action?`<div class="small"><b>Recommended:</b> ${esc(x.detail.recommended_action)}</div>`:""}
+      ${x.resolution?`<div class="small" style="margin-top:4px"><b>Resolution:</b> ${esc(x.resolution)}</div>`:""}
+      ${x.status==="open" && x.kind==="bank_change" ? `<div class="acts"><button class="danger" onclick="resolveExc(${x.id},'reject')">Reject as fraud</button><button onclick="resolveExc(${x.id},'approve')">Approve bank change & pay</button></div>`:""}</div>`;
+  }).join("");
+}
+async function resolveExc(id, action){ await fetch(`/api/exceptions/${id}/resolve`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action})}); poll(); }
+
+function renderAudit(s){
+  const a = s.outputs.audit; if (!a) return;
+  $("audit").className="";
+  $("audit").innerHTML = `<div style="margin-bottom:6px">${a.checks.filter(c=>c.ok).length}/${a.checks.length} checks pass · ${a.flags.length} contradictions · ${a.decisions.length} decisions with evidence</div>
+    <ul class="checks">${a.checks.map(c=>`<li><span>${c.ok?"✅":"🚩"}</span><span><b>${esc(c.check)}</b> — ${esc(c.detail)}</span></li>`).join("")}</ul>
+    <details><summary class="small">Decision log (${a.decisions.length})</summary>${a.decisions.map(d=>`<div style="margin:6px 0"><b>${esc(d.agent)}:</b> ${esc(d.decision)}<div class="small">${d.reasons.map(esc).join("; ")}</div>
+      <div class="src">${(d.evidence||[]).slice(0,6).map(e=>e.fact_id?`fact #${e.fact_id} ${esc(e.key)} (${esc(e.source)})`:esc(e.rule||e.field||"")).join(" · ")}</div></div>`).join("")}</details>`;
+}
+
+function renderOutcome(s){
+  const c = s.outputs.contract, p = s.outputs.payment_advance;
+  if (!s.outputs.audit || !c || c.status!=="signed") { $("outcome").hidden = true; return; }
+  $("outcome").hidden = false;
+  $("outcome").innerHTML = `<h2>Finished work</h2><div class="kv">
+    <div>Purchase order</div><div><b>${esc(c.po_number)}</b> signed with ${esc(c.supplier)} — ${inr(c.terms.total_paise)} (${c.terms.quantity.toLocaleString("en-IN")} × ${inr(c.terms.unit_price_paise)})</div>
+    <div>Delivery</div><div>${esc(c.terms.delivery_city)} by ${c.terms.delivery_date}</div>
+    <div>Advance paid</div><div><b>${inr(p?.transfer?.amount_paise)}</b> (${c.terms.advance_pct}%) · ${s.transfers.length} bank transfer · ${s.ledger.length} ledger entry</div>
+    <div>Blocked</div><div>${events.filter(e=>e.kind==="verdict"&&e.data.verdict!=="PASS").length} suppliers rejected · ${(s.outputs.risk_review?.reviews||[]).filter(r=>r.decision==="BLOCK").length + (c.voided||[]).length} deals blocked · ${s.exceptions.filter(x=>x.kind==="bank_change").length} fraudulent invoice held</div></div>`;
+}
+
+if (location.hash.length > 1) start(location.hash.slice(1));
+</script>
+</body>
+</html>
