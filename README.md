@@ -1,189 +1,134 @@
-# Bazaar: an AI procurement department
+# Riptide: live talent-flow signals on Crustdata
 
-> **One line:** Bazaar takes a vague purchase request all the way to a countersigned purchase order and an advance paid exactly once, and it stops the frauds that a procurement team exists to stop.
+> **One line:** Riptide tells you the moment someone leaves a big company for a startup, says who should act on it and why, and checks that the profile behind the signal is real.
 
-**Theme:** Buying and paying (ContextCon 04, IIT Kanpur).
+**Theme:** Revenue (and Infrastructure for agents), ContextCon 04, IIT Kanpur. Built on Crustdata's Person Search, Discovery Watchers, Person Enrich and the authenticity assessment.
 
 ```
-“We need 5,000 leather laptop sleeves in Bengaluru by 15 December, under ₹12 lakh.”
-        │
-        ▼   ~60 seconds, no one at the keyboard
-PO-xxxx-02 countersigned with Sarvaka Leather Co. — 5,000 × ₹229 = ₹11,45,000
-30% advance ₹3,43,500 paid once · 1 bank transfer · 1 ledger entry
-2 suppliers rejected, 2 deals blocked, 1 fraudulent invoice held for a human, 16/16 audit checks pass
+Crustdata Person Search + a live Discovery Watcher
+      │   "worked at Google / Microsoft / Amazon / Flipkart / … ,
+      │    started a new role in the last 60 days, at a company of ≤ 50 people"
+      ▼
+673 people in India right now  →  parsed into moves  →  scored 0–100  →  trust-checked  →  routed to a buyer
+      ▼
+"Founder leap: ex-Zomato APAC lead → Founder & CEO @ TRIBE (score 68, trusted)"
+   VC:    founder left Zomato to build TRIBE — add to deal flow, intro before the round
+   Sales: new company buying its first tools — offer a founder plan
 ```
 
 ---
 
-## The service
+## The service it replaces
 
-**Who does it today.** Companies use in-house procurement and accounts-payable teams, or outsourced sourcing firms and buying agents. Buying agents in the Kanpur, Agra and Ambur leather clusters typically take a commission of several percent of the order value. The job covers writing the spec, collecting quotes, checking suppliers, negotiating, issuing the PO, matching the invoice and releasing the advance.
+Three kinds of firms pay people to watch who moves where:
 
-**Who pays.** The buyer pays, either in salaries or in a sourcing commission. The real cost is the failures: paying a shell company, a supplier that can't deliver, a price that quietly changes in the contract, and above all paying a fraudster who sent "our bank account has changed". That last one, business email compromise, is one of the most expensive frauds that payables teams face.
-
-**Why we picked it.** The outcome is easy to check: either a PO matching the agreed terms is signed and the right amount reaches the right account exactly once, or it isn't. Every step has a known way to go wrong. It is a service, not a tool.
-
-## What it does now, end to end
-
-| Agent | Job | What makes it trustworthy |
+| Buyer | What they pay for today | What Riptide gives them |
 |---|---|---|
-| **Planner** | Turns the request into a spec, budget, unit ceiling, deadline with buffer, and task plan | A deterministic parser, so the same case worded differently gives the same plan. Claude (optional) only fills empty fields, and every value it returns is checked against the text. If a field that changes the result is missing, it asks a human. |
-| **Scout** | Sends an RFQ to the marketplace, discovers real Indian manufacturers on Crustdata, and resolves duplicates | Two bids from one company under two names (*Sarvaka Leather Co.* and *Sarvaka Exports Pvt. Ltd.*) are merged into one record, so there is one negotiation |
-| **Verifier** | Checks the registry record, name and domain match, company age, signs of activity, web footprint, **capacity against evidence**, and bank account holder (penny drop) | Every check is a fact with a source and a timestamp. If a tool fails it retries, and after that the check is **UNVERIFIABLE**, never a guessed pass. |
-| **Negotiator** | Runs separate **price, delivery and payment-terms** negotiations, in parallel across all verified suppliers (9 threads) | Strategy is deterministic code. Every message goes through a keyed outbox, so a resumed run replays the recorded replies instead of sending again. |
-| **Risk Officer** | Approves or **blocks** each deal against policy: budget, unit ceiling, delivery buffer, advance cap, verification | The rules live in code ([config.py](bazaar/config.py)), not in a prompt |
-| **Contract** | Writes the PO, sends it for countersignature, and **parses the signed copy and compares it field by field** with the agreed terms | Catches a changed price even when the new total is still under budget. Gives the supplier one chance to correct, then voids the PO and moves to the next deal. |
-| **Payments** | Matches the invoice against the PO, the vendor master and a penny drop, then pays the advance with an idempotency key and posts a double-entry ledger line | Exactly-once payment through a payment intent, a bank that honours idempotency keys, and a ledger that is UNIQUE per transfer. A bank-detail change is **always** held for a human. |
-| **Auditor** | Links every decision to its evidence, re-derives every number, checks contradictions, and verifies the hash-chained event log | It recomputes from raw records instead of trusting the other agents' summaries |
+| **VC funds and scouts** | Analysts and tools like Specter or Harmonic, looking for founders before they raise | Founder leaps and stealth founders the week they happen, scored by where the person came from |
+| **Sales teams** | "Job-change" and intent tools (UserGems-style), or SDRs reading LinkedIn by hand | A new VP or Head at a startup: a fresh budget owner in their first 90 days |
+| **Recruiters** | Sourcers tracking which companies are leaking talent | Which big companies people are leaving, and which startups they're joining |
 
-| **Vendor check** (Verifier) | Answers "here is a new vendor's name and website — is it real, who runs it, how long has it existed, what looks off?" for any real company, from Crustdata Identify, Enrich (people, news, headcount history) and Web Search | Confirms the matched record actually owns the domain before using any number from it. A name that doesn't match is a caution plus a name lookup, not a rejection. Adverse news goes to a person to read, and a company named as the *victim* of counterfeiting is recognised as such. |
+It's the same raw event, a person changing jobs, sold three times. The value is getting it early and trusting it.
 
-**Any product, not only leather.** [catalog.py](bazaar/catalog.py) holds product categories (leather goods, beverages, packaged food, IT hardware, furniture, stationery, apparel, plus a general fallback). Each has price-book benchmarks for common items, a capacity model and Crustdata search terms. "We need 12000 Diet cokes under a budget of 3.5 lakh" is beverages at a ₹34 benchmark. It completes end to end: Ambrel's ₹27 → ₹30 contract switch is caught, Sarvaka Beverages signs at ₹29 × 12,000 = ₹3,48,000, and the lookalike `sarvaka-beverag3s.example` fraud is held.
+## What it does, end to end
 
-**When a run gets stuck, it offers ways forward.** A **Recovery advisor** ([advisor.py](bazaar/agents/advisor.py)) reads the evidence the run already gathered and turns it into concrete revisions, each one a button. It looks at verified capacity, transit times, the prices suppliers actually offered, and why each deal was blocked. Example: "I want 200 cokes under rs 4000 by 10 november".
+1. **Finds the moves live.** A Crustdata Person Search asks for people whose *past* employer is a big company and whose *current* role started in the last 60 days at a company of 50 or fewer, in India. Each scan reads it fresh, with no cache. The server rescans every 10 minutes.
+2. **Saves it as a real Crustdata watcher.** One click saves the same filter as a **Discovery Watch** (live during the build: watch #56497). Its runs deliver the people who newly match. Riptide reads them from the run API (pull-only), or receives them at `POST /webhooks/crustdata` if you give it a public URL.
+3. **Turns each profile into a move.** It finds the newest small-company role and the big-company stint the person left. Internships, fellowships, universities, hospitals, freelancing and "independent consultant" don't count as moves.
+4. **Classifies and scores it (0–100), with every point explained:** how prestigious the old employer was, seniority there, tenure, where they went (stealth or founder ranks highest), how fresh the move is, and whether the big company was their last job.
+   - Stealth founder · Founder leap · Senior startup hire · Startup hire
+5. **Routes it to a buyer with a next step** (VC, Sales, Recruiting). These are drafts only. Nobody is contacted, per the handbook.
+6. **Checks the profile is real before anyone acts on it.** See *Trust layer* below. A profile flagged for review has its score halved and is kept out of every index.
+7. **Aggregates:**
+   - **Talent Gravity** ranks startups by how much senior big-company talent they are pulling. Talent inflow is a leading indicator of a raise.
+   - **Exodus** ranks big companies by how many people they are losing.
 
-| Stops at | Options it offers (computed, not guessed) |
+### Trust layer: is the profile behind the signal real?
+
+Fake and inflated profiles pollute every signal product. Riptide checks each one, from data Crustdata already returned, so the checks cost nothing extra:
+
+| Check | What it catches |
 |---|---|
-| Verification: nobody can deliver by 10 Nov | **Move the deadline to 12 Nov** (Sarvaka passed every check but time; earliest verified delivery 11 Nov) · **Move the deadline to 12 Nov and raise the budget to ₹6,800**, because ₹20/unit is also below every quote and changing only the date would stop again at negotiation |
-| Negotiation, after taking only the new date | **Raise the budget to ₹5,600** (200 × ₹28, the lowest real offer) · **Buy 142 units within ₹4,000** |
+| Verified business email on a role | A strong sign the employment is real |
+| Employer linked to a real company page | An invented "Vice President at Google" usually isn't linked to Google's page |
+| Network fits the claim | A "Director" with 40 connections |
+| Audience shape | 9,000 followers on 40 connections, a bought-audience pattern |
+| Concurrent roles | More than three full-time jobs at once |
+| **Growth velocity** | Every scan stores a snapshot of connections and followers. A sudden spike between snapshots is flagged. |
+| **Crustdata's own verdict** (on demand) | Person Enrich `assessment.authenticity`: clearly genuine through clearly fabricated, tier 0–9. It costs no extra credits. |
 
-Every option finishes: 200 cokes for ₹6,000, 200 for ₹5,600, or 142 for ₹3,976. Choosing one starts a **revised run** linked to the old one. That keeps the outbox, POs and ledger of each attempt separate, and every limit is enforced again in code. Options only ever change the buyer's own request. They never relax policy, and fakes or suppliers that misrepresented capacity are never offered as a way forward. A "change something else" form covers anything the advisor didn't think of.
+Verdicts are *trusted · ok · unconfirmed · needs review*. They're flags for a person to read, never accusations. Crustdata's own docs say the same about `probably_fabricated`.
 
-**Buyer profile.** A request that omits the delivery city or the deadline uses the buyer's ship-to city (Bengaluru) and a standard 30-day lead time. These are shown as assumptions on the plan, never silently.
+**What we could not measure:** LinkedIn's daily profile views are not exposed by any Crustdata endpoint, and we don't scrape LinkedIn. Growth velocity across our own snapshots is the honest substitute.
 
-**Where a human is still needed:** missing request fields, a bank-detail change, payments above the auto-pay limit (₹5 lakh: press **Approve payment** and the run resumes and pays once through the same idempotency key), a vendor check that is high-risk, unverifiable or has adverse news, and the case where no supplier signs as agreed. Those are the cases where a person's answer changes the result. When the Planner is missing a field, the **Exceptions for a human** card shows one answer box per question. Each answer is read with that field's own parser, so an unreadable answer such as "soon" is asked again, not guessed. The same run then continues.
+## How it makes Crustdata more money
 
-## The hostile test world
+Riptide sells outcomes, not API calls, and every outcome is metered Crustdata usage:
 
-The handbook says agents can't contact real people, so every supplier Bazaar negotiates with is a **fictional simulated agent with hidden instructions**, on the reserved `.example` domain ([sandbox.py](bazaar/sandbox.py)). The same five personas are generated for every product category, with names, prices, capacity claims and lead times that fit it (Zestora Beverages Hub, Vantrix Technologies and so on). Below is the leather world for the example request. The buyer agents only see what suppliers *say*. A test fails if any buyer-agent module touches supplier internals. Press **Reveal test world** in the UI to see the instructions.
-
-| Supplier | Hidden instruction | Caught by | How |
-|---|---|---|---|
-| Zestora Leather Hub | Fake: cheapest at ₹149, 100% advance, urgency | Verifier | No registry record, domain 19 days old, zero web footprint, penny drop returns a different holder |
-| Vantrix Leather Mfg | Real but 11 people; claims 20,000 units/month | Verifier | Evidence supports about 923/month, which is 21.7× less than claimed; the order needs about 5,000/month |
-| Ojasvi Hidecraft | Honest, but insists on a 40% advance | Risk Officer | Blocked: 40% is over the 30% policy cap |
-| Ambrel Leatherworks | Agrees ₹206, then returns the PO at ₹236 and writes "signed as agreed" | Contract | Field-by-field diff. The new total of ₹11.8 lakh is *under* budget, so a budget check alone would sign it. |
-| Impersonator | After payment, emails from `sarvaka-1eather.example` saying the account changed, the transfer bounced, pay today | Payments | Lookalike domain (96% similar), account differs from the vendor master, wrong penny-drop holder, milestone already paid. Held, and a human is asked to call the supplier on the verified number. |
-| Sarvaka Leather Co. | Honest | — | Wins. Its first registry lookup **times out on purpose**, to show the retry. |
-
-Real companies are used **only for discovery and verification** (with `CRUSTDATA_API_KEY` set). They appear in the UI as "reference only, never contacted". Bad behaviour comes only from the clearly fictional suppliers.
-
-**Real companies get the same checks as sandbox suppliers.** Crustdata Company Search, with category terms and an off-category filter, finds Indian suppliers. (A plain search for "diet coke" returned coal-coke companies, which is why the filter exists.) Company Enrich then supplies their status, current headcount, headcount six months ago (from the weekly timeseries) and HQ. The Verifier runs its own activity and capacity rules on that data, and each number is stored as a fact cited to `Crustdata /company/enrich`. Here is a live run for the example request:
-
-| Real company (Crustdata) | Headcount now / 6 months ago | Verdict |
+| Step | Crustdata endpoint | Credits |
 |---|---|---|
-| RR Exports, Delhi | 32 / 32 | ACTIVE_TOO_SMALL: ≈2,688/month vs ≈5,000 needed |
-| Shri Exports, West Bengal | 21 / 20 | ACTIVE_TOO_SMALL: ≈1,764/month; its own description claims 15,000 bags/month |
-| Spirit Pole, Uttar Pradesh | 2 / 2 | ACTIVE_TOO_SMALL: ≈168/month |
+| Find the moves | Person Search | about 0.03 per result read (our live scans: 2.25 credits for 75 results, 43 signals) |
+| Keep it live | Discovery Watcher | 0.5 per person delivered after a free baseline. Every customer adds watchers. |
+| Trust it | Person Enrich (`assessment`) and Batch Person Verification | about 1 per enrich, 10 per verification verdict |
 
-A company with no headcount on record is **UNVERIFIABLE**, not rejected and not passed. So is a record that doesn't list the queried domain as its own: Crustdata's top match for `superhouse.in` is "Design Edge Media", whose domain is `designedge.media`, so Bazaar refuses to use its numbers.
-
-**Vendor check, live results** (the Trust and compliance sample request):
-
-| Vendor given | Verdict | Why |
-|---|---|---|
-| Hindustan Coca-Cola Beverages, hccb.in | REAL AND TRADING | Founded 1997, about 8,000 people, CEO and CXOs on record, 13 web/news results, no adverse news |
-| Bisleri International, bisleri.com | REAL AND TRADING | One "adverse" story was about people selling *fake Bisleri*, so Bisleri is recorded as the victim, not the wrongdoer |
-| Mirza International, mirzaindia.com | CAUTION | The domain belongs to "Mirza Tanners Limited". The name lookup shows Mirza International's records sit on other domains, so confirm which legal entity will invoice. |
-| Superhouse Limited, superhouse.in | UNVERIFIABLE | Crustdata's record for the domain belongs to a different company. The name lookup found "Superhouse Leathers Limited" on the misspelled `superhourseleather.com`. A person must ask for registration papers. |
-| Zestora Leather Hub, zestora-leather.example (fictional) | HIGH RISK | No registry record, domain 19 days old, no web footprint | Caveat: Crustdata headcount counts people with professional profiles, which undercounts factory-floor workers, so on real companies the capacity model is conservative. Before anyone relied on it, it would need calibrating against known factory output.
+- **Three buyers, one event.** The same move is a deal-flow lead, a sales trigger and a recruiting signal, so Crustdata sells one data pull three times as packaged feeds.
+- **From API to subscription.** VCs and sales teams don't want to write filters. They buy "founders leaving FAANG this week" as a feed. That moves Crustdata from developer usage to seat or per-signal pricing, competing with tools that charge thousands of dollars a year.
+- **Trust as an upsell.** Every delivered signal can carry an authenticity verdict, a paid add-on no other signal vendor has.
+- **A dataset of its own.** Talent Gravity and Exodus, computed across all customers' watches, become a premium index: which startups are pulling talent, before they announce a round.
 
 ## How to run it
 
-No install: Python 3.10+ standard library only.
+Python 3.10+, standard library only.
 
 ```bash
-python3 run.py serve                 # http://localhost:8000: live timeline, kill/restart, exceptions
-python3 run.py demo                  # same purchase, in the terminal
-python3 run.py demo --crash-at-payment   # kill right after the bank moves money, resume, prove it paid once
-python3 -m unittest discover -s tests -v # 25 tests
-python3 run.py demo "we need 12000 Diet cokes under a budget of 3.5 lakh"          # any product category
-python3 run.py demo "Here is a new vendor: Hindustan Coca-Cola Beverages, hccb.in. Is it real?"   # vendor check
+echo 'CRUSTDATA_API_KEY=cd_...' > .env          # gitignored
+python3 riptide.py serve                         # http://localhost:8100 — live dashboard, rescans every 10 min
+python3 riptide.py scan                          # one live scan, printed
+python3 riptide.py watch [--webhook https://…]   # save the filter as a Crustdata Discovery Watch
+python3 riptide.py poll                          # read new watcher runs
+python3 -m unittest discover -s tests -v         # 33 tests (8 Riptide, 25 Bazaar)
 ```
 
-Optional keys (everything runs without them):
+`RIPTIDE_SCAN_MINUTES`, `RIPTIDE_SINCE_DAYS` and `RIPTIDE_COUNTRY` change the schedule and the filter.
 
-```bash
-# or put CRUSTDATA_API_KEY=... in a .env file (gitignored)
-export CRUSTDATA_API_KEY=...    # real-company discovery (Company Search) and verification (Company Enrich)
-export ANTHROPIC_API_KEY=...    # Claude reads messy requests when the parser leaves a field empty
-export BAZAAR_PACE=0.35         # seconds per timeline event (the server's default, for a watchable demo)
-export BAZAAR_SETTLE_SECONDS=8  # the "waiting for settlement" window in which to press Kill
-export BAZAAR_SHIP_TO=Bengaluru BAZAAR_LEAD_DAYS=30  # buyer profile defaults
-```
-
-### The 2-minute demo
-
-1. Paste the request and press **Run purchase**. The pipeline and the live timeline fill in.
-2. **Suppliers:** Zestora (cheapest) is rejected; expand "evidence" to see each fact and its source. Vantrix's capacity claim is rejected. The two Sarvaka bids are merged.
-3. **Negotiations:** three suppliers × three tracks move at the same time. The Risk Officer blocks Ojasvi.
-4. **Contract:** Ambrel's quietly changed price is caught and its PO is voided. Sarvaka signs.
-5. When the timeline shows **"⏳ Waiting for settlement — kill the worker now"**, press **Kill worker (SIGKILL)**, then **Restart worker**. The timeline shows *"Bank already holds transfer TX-… Not sending again."* The UI shows **1** bank transfer.
-6. **Exceptions:** the bank-change invoice is held. Press **Approve bank change & pay**, and code refuses because the milestone is already paid. Then **Reject as fraud**.
-7. End on **Finished work**: the signed PO with its SHA-256, the ledger entry and the audit trail (16/16 checks).
+**Dashboard:** a live feed (new signals flash), tabs per buyer (VC deal flow, Sales triggers, Recruiting, Trust: needs review), "why this score" and trust checks on every card, a **Deep check** button for Crustdata's authenticity verdict, Talent Gravity, Exodus, an activity log, and credits spent per signal.
 
 ## How it's built
 
 ```mermaid
 flowchart LR
-  U[Request in customer's words] --> P[Planner]
-  P --> S[Scout]
-  S -->|RFQ| M[(Sandbox marketplace<br/>fictional suppliers<br/>hidden instructions)]
-  S -->|Company Search| CD[(Crustdata API)]
-  S --> V[Verifier]
-  V -->|registry · penny drop| M
-  V -->|Company Enrich| CD
-  V --> N[Negotiator<br/>price ∥ delivery ∥ payment]
-  N <-->|outbox| M
-  N --> R[Risk Officer<br/>policy in code]
-  R --> C[Contract<br/>field-by-field diff]
-  C <-->|sign / challenge| M
-  C --> PAY[Payments<br/>intent → idempotent bank → ledger]
-  PAY --> B[(Mock bank<br/>idempotency keys)]
-  PAY --> X{{Human exceptions}}
-  PAY --> A[Auditor]
-  subgraph SQLite — single source of truth
-    E[events: hash-chained] --- ST[steps: durable] --- O[outbox] --- F[facts + sources] --- L[ledger]
-  end
-  P & S & V & N & R & C & PAY & A -.-> E
+  PS[Crustdata Person Search<br/>live, every 10 min] --> P[Parse move<br/>new small role + big stint left]
+  W[Crustdata Discovery Watch<br/>runs API / webhook] --> P
+  P --> C[Classify + score 0–100<br/>every point explained]
+  C --> T[Trust layer<br/>consistency, growth velocity,<br/>Crustdata authenticity]
+  T --> R[Route to buyer<br/>VC · Sales · Recruiting]
+  T --> G[Talent Gravity · Exodus]
+  R & G --> D[Live dashboard]
+  P -.snapshots.-> DB[(SQLite: signals, snapshots,<br/>watches, runs, usage)]
 ```
 
-- **State:** one SQLite file ([db.py](bazaar/db.py)). Every stage is a durable step: a finished step is never re-run, so a killed worker resumes exactly where it stopped. Events are hash-chained (`sha256(prev | ts | agent | kind | message | data)`), and the Auditor verifies the chain.
-- **Exactly-once money:** payment intent (key `PO:ADVANCE`) → `bank.transfer(idempotency_key)` → the same key returns the same transfer, and a different amount or account under that key is refused → the ledger is UNIQUE on transfer id. A crash anywhere between those steps heals on resume.
-- **Exactly-once messages:** every message to a counterparty has a deterministic key in the `outbox`. On resume, the recorded reply is used and nothing is re-sent.
-- **Crustdata** ([crustdata.py](bazaar/crustdata.py)): `/company/search` (hybrid search, `locations.country = IND`) and `/company/enrich` (basic_info, headcount with its timeseries, locations). Both were exercised live during the build. It retries 429, 5xx and timeouts with backoff and the `x-ratelimit-reset` header, never retries 401/402/403, and caches every response in SQLite so a resumed run spends no credits twice. On python.org builds of Python for macOS, which ship without root certificates, it falls back to `certifi` or the system CA bundle. A certificate failure is reported immediately and not retried.
-- **Models:** decisions use no model at all. Optional Claude (`BAZAAR_MODEL`, default `claude-sonnet-5-5`) extracts fields from messy requests, and those values are validated in code.
-- **Runs on:** a stdlib HTTP server ([server.py](bazaar/server.py)) plus a separate worker process per run ([worker.py](bazaar/worker.py)), which is what lets the demo SIGKILL the worker while the UI keeps watching.
+- [riptide/engine.py](riptide/engine.py) holds the filter, move parsing, scoring, trust checks, watcher create and poll, webhook ingest, deep check and aggregates.
+- [riptide/server.py](riptide/server.py) runs the background live loop and the JSON API. [web/riptide.html](web/riptide.html) is the dashboard.
+- One move is one signal (keyed on person, new company and start date), so a rescan or a repeated watcher run never duplicates it. Watcher runs already read are recorded and never ingested twice.
+- The shared Crustdata client retries 429 and 5xx with `x-ratelimit-reset`, never retries 401/402/403, and works on python.org macOS builds that ship without root certificates.
 
 ## Approaches we weighed
 
-1. **One LLM agent with tools, prompted to follow the policy.** Fast to build, but limits written into a prompt can be talked past, and an answer that changes with wording fails "same case, same answer". Rejected for anything that moves money.
-2. **An LLM for every agent, including negotiation and decisions.** Good for open-ended text, but non-deterministic: a resumed run could reach a *different* deal than the one already half-signed. That makes crash recovery unsound.
-3. **Chosen: deterministic agents over a durable event log, with an LLM only at the edge (reading the request).** Every rule is code, every side effect is keyed, and every fact has a source. It is less "magical" but it finishes the job reliably, which is what the buyer pays for.
+1. **Scrape LinkedIn for views and connections.** It breaks LinkedIn's terms, and the data would be the opposite of what Crustdata sells. Rejected.
+2. **Only Crustdata Watchers with webhooks.** This is the right production design, but it needs a public URL, and a new watch's later runs are hourly at best. We use the watcher for the "keep it live" path and a live Person Search for instant results.
+3. **Chosen: search plus watcher plus our own snapshots.** It is instant on first open and stays live, and the snapshots give growth velocity, which no single call provides.
 
-**What worked:** treating every outbound action (a message, a transfer, a ledger post) as keyed and idempotent made crash recovery almost free. Parsing the *signed text* instead of trusting the supplier's structured reply is what catches the late price change.
+**What didn't work at first:**
+- The raw search matched people through *any* past role. An internship at Microsoft or a fellowship at Google made someone a "big-company leaver", and universities and hospitals counted as big companies. Move parsing now requires a real stint and a real company.
+- Watcher runs nest delivered people under `notifications[].payload.notifications[].record`. Our first reader found 0 of the 5 people the watcher actually delivered.
 
-**What didn't work at first:** checking the signed contract only against the budget. Ambrel's altered total (₹11.8 lakh) is under the ₹12 lakh budget, so it passed. Only a field-by-field diff against the *agreed* terms catches it. We also found that a killed child process becomes a zombie that still answers `kill(pid, 0)`, so the server reaps workers before deciding whether one is alive. Testing on requests we hadn't prepared exposed two more: the Negotiator sized its concessions from the budget, so the same deal under a ₹20 lakh budget cost ₹250/unit instead of ₹229. Now the concession path comes from the supplier's quote and the budget only caps it. A request for cotton tote bags was "won" by a leather workshop. Leather-only suppliers fixed the symptom, but "12000 Diet cokes" still failed, so the test world became generated per product category. The first vendor checks were also too strict: they rejected Mirza International over a renamed legal entity, and Bisleri over a story about counterfeiters. Both are honest businesses, and the theme asks for "no honest business turned away", so a name mismatch is now a caution, adverse news goes to a person, and counterfeiting victims are recognised.
+## What we left out, and what's next
 
-**Hardest case:** a kill *after* the bank has moved the money but *before* the ledger is written. The bank has paid and our books don't know it. The fix is that the bank honours the idempotency key, and the resumed step asks the bank first, finds the transfer, and only posts the missing ledger line.
+- **Webhooks in production:** run behind a public URL so watchers push instead of being polled.
+- **Person Entity Watchers on the people already in the feed,** so a founder's later title change ("Co-founder" to "CEO, raised seed") is a second signal.
+- **Calibrate the score** against moves that were followed by a funding round. Talent Gravity's predictive claim needs that back-test before anyone sells it.
+- **Outreach:** drafts only tonight. Sending needs consent and a sender identity.
 
-**How we tested it:** `tests/test_bazaar.py` has 25 tests. They cover the parser on four wordings of the same request, crore amounts and year rollover, missing fields going to a human, and a human's answers resuming the same run (an unreadable answer is asked again). They run the full purchase and assert every trap is caught. They make a **real subprocess crash** (exit 137) after the transfer, then resume and assert exactly 1 transfer, 1 ledger entry and no duplicate messages. They also cover a re-run being a no-op, bank idempotency conflicts, hash-chain tamper detection, approval of the fraud being refused, the same deal at the same price whatever the budget, Diet Coke and laptops completing with every trap caught in their own category, a large advance waiting for a human and then paying once, the ways-forward options for "200 cokes under ₹4,000 by 10 November" each finishing (with earlier answers carried into the revision, and fakes never offered), the vendor check (request detection, fake and honest vendors, a counterfeiting victim, and a domain owned by a different company), an order no supplier can verifiably deliver going to a human, the real-company verdicts on Crustdata-shaped records (including one with no record and one with no headcount), and a check that buyer agents never read supplier internals.
+---
 
-## What we left out to ship in eight hours
-
-- **Real suppliers.** Negotiation is only with simulated suppliers, by the rules of the room.
-- **Contract scope.** The negotiation tracks are independent; real deals trade price against advance and delivery. Contract parsing covers our own PO format, not arbitrary supplier PDFs.
-- **Payment milestones.** Only the advance is paid. The balance on delivery and QC is modelled in the PO but not executed. The bank is a mock.
-- **Verification depth.** No GST/MCA registry API. The capacity model is a simple headcount × productivity estimate whose assumptions are shown on screen.
-- **Real companies are never negotiated with.** Only the fictional suppliers bid and sign, by the rules of the room. Real companies are discovered and verified, and the 3 highest-ranked are enriched to save credits.
-
-## What's next, and why not tonight
-
-- **Real-world rails:** GSTIN and MCA lookups, a real penny-drop API, and UPI/NEFT payouts through a payment provider that supports idempotency keys. These need KYC'd accounts, which a hackathon cannot get.
-- **Coupled negotiation:** trading price against advance against delivery, with an LLM writing the messages while code keeps the limits. It needs evaluation on many simulated supplier personas before it can be trusted.
-- **Delivery and QC:** a goods-receipt note, AQL inspection results, then the balance payment through the same exactly-once path. This needs a receiving process that doesn't exist yet.
-- **Watcher:** a Crustdata Watcher on the winning supplier's headcount and news, so a supplier that collapses mid-order is flagged before the balance is paid.
-
-## The future of this service
-
-Procurement becomes a service bought per order, not per seat. The buyer states the outcome and the limits, and agents run sourcing, verification, negotiation, contracting and payment, with a human reviewing only exceptions. The moat is not the language model. It is the controls: verified identities, exactly-once money movement, and an audit trail an auditor can sign without watching the agents work.
+*Earlier tonight we built Bazaar, an AI procurement department. It is still in this repo and still works (`python3 run.py serve`). See [BAZAAR.md](BAZAAR.md).*

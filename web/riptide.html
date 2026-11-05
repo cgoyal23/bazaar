@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Riptide — live talent flow</title>
+<style>
+:root{--bg:#f6f5f1;--panel:#fff;--ink:#1c1b19;--muted:#6b6862;--line:#e4e1da;--soft:#f1efe9;
+ --accent:#2f4bd8;--ok:#2b8a3e;--okbg:#ebfbee;--warn:#b35c00;--warnbg:#fff4e6;--bad:#c92a2a;--badbg:#fff5f5;--new:#fff9db}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#141413;--panel:#1d1c1a;--ink:#ecebe7;--muted:#a3a09a;
+ --line:#34322e;--soft:#26251f;--accent:#8fa2ff;--ok:#69db7c;--okbg:#1e3324;--warn:#ffa94d;--warnbg:#3a2a16;--bad:#ff8787;--badbg:#3b1d1d;--new:#3a3416}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 22px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+.logo{font-weight:800;font-size:20px;letter-spacing:-.02em}.logo span{color:var(--accent)}
+.tag{color:var(--muted)}.chips{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-size:12px;padding:3px 9px;border-radius:99px;background:var(--soft);border:1px solid var(--line);color:var(--muted)}
+.chip b{color:var(--ink)}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:5px;animation:pulse 1.6s infinite}
+@keyframes pulse{50%{opacity:.3}}
+main{max-width:1400px;margin:0 auto;padding:16px 22px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+button{font:inherit;padding:7px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}button:disabled{opacity:.5;cursor:default}
+.tabs button.on{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:14px;align-items:start}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px}
+.sig{display:grid;grid-template-columns:52px 1fr;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.sig:last-child{border-bottom:0}.sig.fresh{background:var(--new);margin:0 -14px;padding:12px 14px}
+.score{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:16px;border:3px solid var(--accent)}
+.name{font-weight:700}.name a{color:inherit}.move{margin:2px 0}.small{font-size:12px;color:var(--muted)}
+.badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 7px;border-radius:5px;margin-left:4px;vertical-align:1px}
+.k-stealth_founder,.k-founder_leap{background:#efedff;color:#5f3dc4}.k-senior_startup_hire{background:#e7f5ff;color:#1864ab}.k-startup_hire{background:var(--soft);color:var(--muted)}
+.t-trusted{background:var(--okbg);color:var(--ok)}.t-ok{background:var(--soft);color:var(--muted)}.t-unconfirmed{background:var(--warnbg);color:var(--warn)}.t-review{background:var(--badbg);color:var(--bad)}
+.acts{margin-top:6px;display:flex;flex-direction:column;gap:3px}.act{font-size:13px}.act b{display:inline-block;min-width:76px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--accent)}
+details{margin-top:6px}summary{cursor:pointer;font-size:12px;color:var(--muted)}
+ul.checks{list-style:none;padding:0;margin:6px 0 0}ul.checks li{font-size:12px;display:grid;grid-template-columns:18px 1fr;padding:1px 0}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{text-align:left;padding:5px 4px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:600;font-size:12px}
+.log{max-height:260px;overflow:auto;font-size:12px}.log div{padding:3px 0;border-bottom:1px dashed var(--line)}
+.empty{color:var(--muted);font-style:italic}.num{font-variant-numeric:tabular-nums}
+input{font:inherit;padding:6px 9px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);min-width:240px}
+.note{font-size:12px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Rip<span>tide</span></div>
+  <div class="tag">Who is leaving big companies for startups — the moment Crustdata sees it</div>
+  <div class="chips" id="chips"></div>
+</header>
+<main>
+  <div class="bar">
+    <button class="primary" id="scan">Scan Crustdata now</button>
+    <button id="watch">Start a Crustdata watcher</button>
+    <button id="poll">Read watcher runs</button>
+    <input id="webhook" placeholder="optional public webhook URL (ngrok)">
+    <span class="small" id="msg"></span>
+  </div>
+  <div class="bar tabs" id="tabs">
+    <button data-t="all" class="on">All signals</button>
+    <button data-t="VC">VC deal flow</button>
+    <button data-t="Sales">Sales triggers</button>
+    <button data-t="Recruiting">Recruiting</button>
+    <button data-t="review">Trust: needs review</button>
+  </div>
+  <div class="grid">
+    <div class="card"><h2>Live signals <span id="count"></span></h2><div id="feed" class="empty">Waiting for the first scan…</div></div>
+    <div>
+      <div class="card"><h2>Talent gravity — startups pulling talent</h2><div id="gravity" class="empty">—</div>
+        <div class="note">Weighted by seniority of who joined; profiles flagged for review do not count. Talent inflow tends to come before a funding announcement.</div></div>
+      <div class="card"><h2>Big companies losing people</h2><div id="exodus" class="empty">—</div></div>
+      <div class="card"><h2>Revenue for Crustdata</h2><div id="revenue"></div></div>
+      <div class="card"><h2>Activity</h2><div id="log" class="log"></div></div>
+    </div>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let tab = "all", seen = null, fresh = new Set(), data = null;
+try { tab = localStorage.getItem("riptide.tab") || "all"; } catch(e){}
+
+document.querySelectorAll("#tabs button").forEach(b => {
+  b.classList.toggle("on", b.dataset.t === tab);
+  b.onclick = () => { tab = b.dataset.t; try{localStorage.setItem("riptide.tab", tab)}catch(e){}
+    document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("on", x===b)); render(); };
+});
+async function post(url, body){ return fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body||{})}).then(r=>r.json()); }
+$("scan").onclick = async () => { $("scan").disabled = true; $("msg").textContent = "Scanning Crustdata…";
+  const r = await post("/api/scan"); $("msg").textContent = r.ok ? `${r.total} people match · ${r.new} new signal(s)` : r.message; $("scan").disabled = false; load(); };
+$("watch").onclick = async () => { $("watch").disabled = true; $("msg").textContent = "Creating a Crustdata Discovery Watch…";
+  const r = await post("/api/watch", {webhook_url: $("webhook").value.trim()}); $("msg").textContent = r.ok ? `Watch #${r.watch} ${r.status} · ${r.new_signals} signal(s) from its first run` : r.message; $("watch").disabled = false; load(); };
+$("poll").onclick = async () => { const r = await post("/api/poll"); $("msg").textContent = `${r.new_signals} new signal(s) from watcher runs`; load(); };
+async function deep(id, btn){ btn.disabled = true; btn.textContent = "Checking…"; const r = await post(`/api/signals/${id}/deep-check`);
+  btn.textContent = r.ok ? `Crustdata: ${r.verdict || "no verdict"}` : r.message; load(); }
+
+function ago(ts){ const s = (Date.now() - new Date(ts))/1000; return s < 60 ? "just now" : s < 3600 ? `${Math.round(s/60)} min ago` : `${Math.round(s/3600)} h ago`; }
+const icon = ok => ok===true ? "✅" : ok===false ? "⚠️" : "❔";
+
+function sigHTML(s){
+  const f = s.from, t = s.to;
+  return `<div class="sig ${fresh.has(s.id)?"fresh":""}">
+    <div class="score num" title="signal score">${s.score}</div>
+    <div>
+      <div><span class="name">${s.profile_url?`<a href="${esc(s.profile_url)}" target="_blank" rel="noopener">${esc(s.name)}</a>`:esc(s.name)}</span>
+        <span class="badge k-${s.kind}">${esc(s.kind_label)}</span><span class="badge t-${s.trust}">${s.trust==="review"?"needs review":esc(s.trust)}</span></div>
+      <div class="move">Ex-<b>${esc(f.company)}</b> ${esc(f.title)} <span class="small">(${f.years} yrs)</span> → <b>${esc(t.title)}</b> at <b>${esc(t.company)}</b>
+        <span class="small">(${t.headcount ? t.headcount + " staff" : "brand new"})</span></div>
+      <div class="small">Started ${esc(t.start)} · ${esc(s.location||"")} · ${(s.connections||0).toLocaleString()} connections · first seen ${ago(s.first_seen)} · ${esc(s.source)}</div>
+      <div class="acts">${s.actions.map(a=>`<div class="act"><b>${esc(a.buyer)}</b> ${esc(a.action)}</div>`).join("")}</div>
+      <details><summary>Why ${s.score} · trust checks (${s.trust_checks.filter(c=>c.ok===false).length} flagged)</summary>
+        <table>${s.score_why.map(w=>`<tr><td>${esc(w.factor)}</td><td class="num">+${w.points}</td><td class="small">${esc(w.why)}</td></tr>`).join("")}</table>
+        <ul class="checks">${s.trust_checks.map(c=>`<li><span>${icon(c.ok)}</span><span>${esc(c.detail)}</span></li>`).join("")}</ul>
+        ${s.profile_url && !s.crustdata_verdict ? `<button onclick="deep('${s.id}', this)" style="margin-top:6px">Deep check: Crustdata authenticity verdict</button>` : ""}
+        <div class="note">Trust checks flag profiles for a person to review; they are not accusations.</div>
+      </details>
+    </div></div>`;
+}
+
+function render(){
+  if (!data) return;
+  let sigs = data.signals;
+  if (tab === "review") sigs = sigs.filter(s => s.trust === "review" || s.trust === "unconfirmed");
+  else if (tab !== "all") sigs = sigs.filter(s => s.actions.some(a => a.buyer === tab));
+  if (tab !== "all") sigs = [...sigs].sort((a,b)=>b.score-a.score);
+  $("count").textContent = `· ${sigs.length}`;
+  $("feed").className = sigs.length ? "" : "empty";
+  $("feed").innerHTML = sigs.length ? sigs.slice(0,80).map(sigHTML).join("") : "No signals in this view yet.";
+  $("gravity").className = data.gravity.length ? "" : "empty";
+  $("gravity").innerHTML = data.gravity.length ? `<table><tr><th>Startup</th><th>Joined</th><th>From</th></tr>${data.gravity.map(g=>`<tr><td><b>${esc(g.company)}</b><div class="small">${g.headcount?g.headcount+" staff":"brand new"}</div></td><td class="num">${g.people} <span class="small">(weight ${g.weight})</span></td><td class="small">${g.from.map(esc).join(", ")}</td></tr>`).join("")}</table>` : "—";
+  $("exodus").className = data.exodus.length ? "" : "empty";
+  $("exodus").innerHTML = data.exodus.length ? `<table><tr><th>Company</th><th>Left</th><th>Senior</th></tr>${data.exodus.map(e=>`<tr><td><b>${esc(e.company)}</b></td><td class="num">${e.people}</td><td class="num">${e.senior}</td></tr>`).join("")}</table>` : "—";
+  const used = data.usage.reduce((a,u)=>a+u.credits,0), n = data.signals.length || 1;
+  $("revenue").innerHTML = `<table>
+    <tr><td>Credits spent so far</td><td class="num"><b>${used.toFixed(2)}</b></td></tr>
+    <tr><td>Signals produced</td><td class="num"><b>${data.signals.length}</b></td></tr>
+    <tr><td>Credits per signal</td><td class="num"><b>${(used/n).toFixed(3)}</b></td></tr></table>
+    <div class="note">Every signal is Crustdata usage: Person Search to find it, a Watcher (0.5 credits per person) to keep it live, Enrich or Verification (10 credits) to trust it. Sold as ready-made feeds — VC deal flow, sales triggers, recruiting windows — each buyer pays for outcomes, and Crustdata's metered calls grow with every customer.</div>`;
+  $("log").innerHTML = data.events.map(e=>`<div><span class="small">${new Date(e.ts).toLocaleTimeString("en-GB",{hour12:false})}</span> ${esc(e.message)}</div>`).join("") || `<div class="empty">Nothing yet.</div>`;
+  const st = data.state, w = data.watches[0];
+  $("chips").innerHTML = `<span class="chip"><span class="dot"></span><b>live</b> · Crustdata</span>
+    <span class="chip">${st.scanning ? "<b>scanning…</b>" : `last scan <b>${st.last_scan ? ago(st.last_scan) : "—"}</b>`}</span>
+    <span class="chip">next in <b>${st.next_in!=null ? Math.ceil(st.next_in/60)+" min" : "—"}</b></span>
+    <span class="chip">${w ? `watcher <b>#${w.id} ${esc(w.status||"")}</b>` : "no watcher yet"}</span>
+    ${st.last_error ? `<span class="chip" style="color:var(--bad)">${esc(st.last_error.slice(0,80))}</span>` : ""}`;
+}
+
+async function load(){
+  try { data = await fetch("/api/feed").then(r=>r.json()); } catch(e){ return; }
+  const ids = new Set(data.signals.map(s=>s.id));
+  if (seen) ids.forEach(id => { if (!seen.has(id)) fresh.add(id); });
+  seen = ids;
+  render();
+}
+load(); setInterval(load, 4000);
+</script>
+</body>
+</html>

@@ -41,22 +41,25 @@ class Crustdata:
     def live(self) -> bool:
         return bool(self.key)
 
-    def _post(self, path: str, body: dict, retries: int = 3, timeout: int = 30):
-        cache_key = db.sha256(path + db.dumps(body))
-        row = db.conn().execute("SELECT response FROM api_cache WHERE key=?", (cache_key,)).fetchone()
-        if row:
-            return json.loads(row["response"])
+    def _post(self, path: str, body: dict, retries: int = 3, timeout: int = 30, cache: bool = True, method="POST"):
+        """cache=False for live reads (a watcher run, a fresh scan) that must not replay an old answer."""
+        cache_key = db.sha256(method + path + db.dumps(body))
+        if cache:
+            row = db.conn().execute("SELECT response FROM api_cache WHERE key=?", (cache_key,)).fetchone()
+            if row:
+                return json.loads(row["response"])
         last = None
         for attempt in range(retries + 1):
             req = urllib.request.Request(
-                BASE + path, data=json.dumps(body).encode(), method="POST",
+                BASE + path, data=None if method == "GET" else json.dumps(body).encode(), method=method,
                 headers={"authorization": f"Bearer {self.key}", "content-type": "application/json",
                          "x-api-version": "2025-11-01", "user-agent": "bazaar-procurement/1.0"})
             try:
                 with urllib.request.urlopen(req, timeout=timeout, context=config.ssl_context()) as r:
                     data = json.loads(r.read())
-                db.conn().execute("INSERT OR REPLACE INTO api_cache VALUES(?,?,?,?)",
-                                  (cache_key, path, json.dumps(data), db.now()))
+                if cache:
+                    db.conn().execute("INSERT OR REPLACE INTO api_cache VALUES(?,?,?,?)",
+                                      (cache_key, path, json.dumps(data), db.now()))
                 return data
             except urllib.error.HTTPError as e:
                 last = f"HTTP {e.code}"
@@ -67,7 +70,11 @@ class Crustdata:
                     wait = float(e.headers.get("x-ratelimit-reset") or 2 ** attempt)
                     wait = min(max(wait, 1.0), 20.0)
                 else:
-                    raise CrustdataError(f"{path}: HTTP {e.code}") from e
+                    try:
+                        detail = e.read().decode(errors="replace")[:400]
+                    except Exception:
+                        detail = ""
+                    raise CrustdataError(f"{path}: HTTP {e.code} {detail}") from e
             except urllib.error.URLError as e:
                 if isinstance(e.reason, ssl.SSLCertVerificationError):
                     raise CrustdataError(f"{path}: TLS certificate check failed — no CA bundle found "
@@ -81,6 +88,9 @@ class Crustdata:
                 self.on_event("retry", f"Crustdata {path} failed ({last}); retry {attempt + 1}/{retries} in {wait:.0f}s")
                 time.sleep(wait)
         raise CrustdataError(f"{path}: gave up after {retries} retries ({last})")
+
+    def get(self, path: str):
+        return self._post(path, {}, cache=False, method="GET")
 
     def search_companies(self, query: str, country: str = "IND", limit: int = 10):
         body = {
