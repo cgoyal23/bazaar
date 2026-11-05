@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 os.environ["BAZAAR_TODAY"] = "2026-11-06"
 os.environ["BAZAAR_PACE"] = "0"
 os.environ["BAZAAR_SETTLE_SECONDS"] = "0"
+os.environ["BAZAAR_NO_DOTENV"] = "1"  # tests stay offline even if .env holds keys
 os.environ.pop("CRUSTDATA_API_KEY", None)
 os.environ.pop("ANTHROPIC_API_KEY", None)
 

@@ -8,6 +8,25 @@ import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+
+def _load_dotenv(path=os.path.join(ROOT, ".env")):
+    """Read KEY=VALUE lines from .env (gitignored). Real environment variables win."""
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip().removeprefix("export ").strip()
+                os.environ.setdefault(k, v.strip().strip("'\""))
+    except OSError:
+        pass
+
+
+if not os.environ.get("BAZAAR_NO_DOTENV"):
+    _load_dotenv()
+
 # Procurement policy (enforced in code by Risk Officer, Contract and Payments).
 POLICY = {
     "max_advance_pct": 30,              # never pay more than 30% before delivery
