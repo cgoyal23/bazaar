@@ -31,6 +31,11 @@ def audit(store, spec, scouted, verified, negotiated, reviewed, contract, paymen
                           "reasons": v["reasons"] or ["all checks passed"], "evidence": cite(ev)})
         check(f"evidence:{v['domain']}", len(ev) > 0, f"{v['supplier']} decision cites {len(ev)} facts")
 
+    for rc in verified.get("real_companies") or []:
+        ev = [f["id"] for f in facts.values() if f["subject"] == f"real:{rc.get('domain')}"]
+        decisions.append({"agent": "Verifier", "decision": f"{rc['verdict']} {rc['name']} (real company, reference only)",
+                          "reasons": rc.get("reasons") or ["active, capacity covers the order"], "evidence": cite(ev)})
+
     for r in reviewed["reviews"]:
         decisions.append({"agent": "Risk Officer", "decision": f"{r['decision']} {r['supplier']}",
                           "reasons": r["reasons"] or ["all policy rules pass"],

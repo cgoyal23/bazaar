@@ -53,6 +53,16 @@ The handbook says agents can't contact real people, so every supplier Bazaar neg
 
 Real companies are used **only for discovery and verification** (with `CRUSTDATA_API_KEY` set). They appear in the UI as "reference only, never contacted". Bad behaviour comes only from the clearly fictional suppliers.
 
+**Real companies get the same checks as sandbox suppliers.** Crustdata Company Search finds Indian leather-goods makers. Company Enrich then supplies their status, current headcount, headcount six months ago (from the weekly timeseries) and HQ. The Verifier runs its own activity and capacity rules on that data, and each number is stored as a fact cited to `Crustdata /company/enrich`. Here is a live run for the example request:
+
+| Real company (Crustdata) | Headcount now / 6 months ago | Verdict |
+|---|---|---|
+| RR Exports, Delhi | 32 / 32 | ACTIVE_TOO_SMALL: ≈2,688/month vs ≈5,000 needed |
+| Shri Exports, West Bengal | 21 / 20 | ACTIVE_TOO_SMALL: ≈1,764/month; its own description claims 15,000 bags/month |
+| Spirit Pole, Uttar Pradesh | 2 / 2 | ACTIVE_TOO_SMALL: ≈168/month |
+
+A company with no headcount on record is **UNVERIFIABLE**, not rejected and not passed. Caveat: Crustdata headcount counts people with professional profiles, which undercounts factory-floor workers, so on real companies the capacity model is conservative. Before anyone relied on it, it would need calibrating against known factory output.
+
 ## How to run it
 
 No install: Python 3.10+ standard library only.
@@ -61,12 +71,13 @@ No install: Python 3.10+ standard library only.
 python3 run.py serve                 # http://localhost:8000: live timeline, kill/restart, exceptions
 python3 run.py demo                  # same purchase, in the terminal
 python3 run.py demo --crash-at-payment   # kill right after the bank moves money, resume, prove it paid once
-python3 -m unittest discover -s tests -v # 14 tests
+python3 -m unittest discover -s tests -v # 15 tests
 ```
 
 Optional keys (everything runs without them):
 
 ```bash
+# or put CRUSTDATA_API_KEY=... in a .env file (gitignored)
 export CRUSTDATA_API_KEY=...    # real-company discovery (Company Search) and verification (Company Enrich)
 export ANTHROPIC_API_KEY=...    # Claude reads messy requests when the parser leaves a field empty
 export BAZAAR_PACE=0.35         # seconds per timeline event (the server's default, for a watchable demo)
@@ -112,7 +123,7 @@ flowchart LR
 - **State:** one SQLite file ([db.py](bazaar/db.py)). Every stage is a durable step: a finished step is never re-run, so a killed worker resumes exactly where it stopped. Events are hash-chained (`sha256(prev | ts | agent | kind | message | data)`), and the Auditor verifies the chain.
 - **Exactly-once money:** payment intent (key `PO:ADVANCE`) → `bank.transfer(idempotency_key)` → the same key returns the same transfer, and a different amount or account under that key is refused → the ledger is UNIQUE on transfer id. A crash anywhere between those steps heals on resume.
 - **Exactly-once messages:** every message to a counterparty has a deterministic key in the `outbox`. On resume, the recorded reply is used and nothing is re-sent.
-- **Crustdata** ([crustdata.py](bazaar/crustdata.py)): `/company/search` (hybrid search, `locations.country = IND`) and `/company/enrich` (basic_info, headcount, locations). It retries 429, 5xx and timeouts with backoff and the `x-ratelimit-reset` header, never retries 401/402/403, and caches every response in SQLite so a resumed run spends no credits twice.
+- **Crustdata** ([crustdata.py](bazaar/crustdata.py)): `/company/search` (hybrid search, `locations.country = IND`) and `/company/enrich` (basic_info, headcount with its timeseries, locations). Both were exercised live during the build. It retries 429, 5xx and timeouts with backoff and the `x-ratelimit-reset` header, never retries 401/402/403, and caches every response in SQLite so a resumed run spends no credits twice. On python.org builds of Python for macOS, which ship without root certificates, it falls back to `certifi` or the system CA bundle. A certificate failure is reported immediately and not retried.
 - **Models:** decisions use no model at all. Optional Claude (`BAZAAR_MODEL`, default `claude-sonnet-5-5`) extracts fields from messy requests, and those values are validated in code.
 - **Runs on:** a stdlib HTTP server ([server.py](bazaar/server.py)) plus a separate worker process per run ([worker.py](bazaar/worker.py)), which is what lets the demo SIGKILL the worker while the UI keeps watching.
 
@@ -128,7 +139,7 @@ flowchart LR
 
 **Hardest case:** a kill *after* the bank has moved the money but *before* the ledger is written. The bank has paid and our books don't know it. The fix is that the bank honours the idempotency key, and the resumed step asks the bank first, finds the transfer, and only posts the missing ledger line.
 
-**How we tested it:** `tests/test_bazaar.py` has 14 tests. They cover the parser on four wordings of the same request, crore amounts and year rollover, and missing fields going to a human. They run the full purchase and assert every trap is caught. They make a **real subprocess crash** (exit 137) after the transfer, then resume and assert exactly 1 transfer, 1 ledger entry and no duplicate messages. They also cover a re-run being a no-op, bank idempotency conflicts, hash-chain tamper detection, approval of the fraud being refused, the same deal at the same price whatever the budget, an item no supplier makes going to a human, an order no supplier can verifiably deliver going to a human, and a check that buyer agents never read supplier internals.
+**How we tested it:** `tests/test_bazaar.py` has 15 tests. They cover the parser on four wordings of the same request, crore amounts and year rollover, and missing fields going to a human. They run the full purchase and assert every trap is caught. They make a **real subprocess crash** (exit 137) after the transfer, then resume and assert exactly 1 transfer, 1 ledger entry and no duplicate messages. They also cover a re-run being a no-op, bank idempotency conflicts, hash-chain tamper detection, approval of the fraud being refused, the same deal at the same price whatever the budget, an item no supplier makes going to a human, an order no supplier can verifiably deliver going to a human, the real-company verdicts on Crustdata-shaped records (including one with no record and one with no headcount), and a check that buyer agents never read supplier internals.
 
 ## What we left out to ship in eight hours
 
@@ -136,7 +147,7 @@ flowchart LR
 - **Contract scope.** The negotiation tracks are independent; real deals trade price against advance and delivery. Contract parsing covers our own PO format, not arbitrary supplier PDFs.
 - **Payment milestones.** Only the advance is paid. The balance on delivery and QC is modelled in the PO but not executed. The bank is a mock.
 - **Verification depth.** No GST/MCA registry API. The capacity model is a simple headcount × productivity estimate whose assumptions are shown on screen.
-- **Untested live path.** The Crustdata path follows the documented request shapes but was not exercised with a live key during this build, because none was available on the build machine.
+- **Real companies are never negotiated with.** Only the fictional suppliers bid and sign, by the rules of the room. Real companies are discovered and verified, and the 3 highest-ranked are enriched to save credits.
 
 ## What's next, and why not tonight
 

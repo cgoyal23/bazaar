@@ -29,7 +29,8 @@ def complete(system: str, prompt: str, max_tokens: int = 500, timeout: int = 30)
         headers={"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01",
                  "content-type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        from . import config
+        with urllib.request.urlopen(req, timeout=timeout, context=config.ssl_context()) as r:
             data = json.loads(r.read())
         return "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
     except Exception:

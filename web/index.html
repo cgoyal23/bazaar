@@ -262,7 +262,7 @@ function renderSuppliers(s){
   const real = (s.outputs.verify?.real_companies || s.outputs.scout?.real_companies || []);
   $("suppliers").className="";
   $("suppliers").innerHTML = `<table><tr><th>Supplier (fictional, sandbox)</th><th>Bid</th><th>Verdict</th></tr>${rows}</table>` +
-    (real.length ? `<div style="margin-top:10px"><b class="small">Real companies found on Crustdata (reference only — never contacted)</b><table>${real.map(r=>`<tr><td>${esc(r.name)} <span class="small">${esc(r.domain||"")}</span></td><td class="small">headcount ${r.headcount??"?"} · founded ${r.year_founded??"?"}</td><td><span class="badge b-ok">${esc(r.verdict||"found")}</span></td></tr>`).join("")}</table></div>` : "");
+    (real.length ? `<div style="margin-top:10px"><b class="small">Real companies found on Crustdata (reference only — never contacted)</b><table>${real.map(r=>`<tr><td>${esc(r.name)} <span class="small">${esc(r.domain||"")}</span></td><td class="small">${esc(r.headquarters||"")} · headcount ${r.headcount??"?"}${r.headcount_6mo_ago?` (6 mo ago ${r.headcount_6mo_ago})`:""} · founded ${r.year_founded??"?"}${r.capacity_month!=null?` · ≈${r.capacity_month.toLocaleString("en-IN")}/mo vs ≈${r.needed_month.toLocaleString("en-IN")} needed`:""}</td><td><span class="badge ${r.verdict==="ACTIVE_CAN_SUPPLY"?"b-ok":r.verdict?"b-warn":"b-ok"}">${esc((r.verdict||"found").replaceAll("_"," "))}</span></td></tr>`).join("")}</table></div>` : "");
 }
 
 function renderNegos(s){

@@ -141,9 +141,30 @@ def _verdict(store, cand, checks, spec, rec=None):
     return out
 
 
-def verify_real(store, companies, limit=3):
-    """Verify real Crustdata-discovered companies (reference only, never contacted)."""
+def _short_place(hq):
+    """'Jwala Puri, Peeragarhi, ..., Delhi, India' -> 'Delhi, India'."""
+    if not isinstance(hq, str):
+        return hq
+    parts = [p.strip() for p in hq.split(",") if p.strip()]
+    return ", ".join(parts[-2:]) if len(parts) > 2 else hq
+
+
+def _headcount_months_ago(data, months=6):
+    """Headcount closest to `months` ago, from Crustdata's weekly timeseries."""
+    series = dig(data, "headcount.timeseries") or []
+    cutoff = (config.today() - datetime.timedelta(days=30 * months)).isoformat()
+    past = [p for p in series if isinstance(p, dict) and p.get("date", "") <= cutoff and p.get("employee_count")]
+    return (past[-1]["employee_count"], past[-1]["date"]) if past else (None, None)
+
+
+def verify_real(store, companies, spec=None, limit=3):
+    """Run the Verifier's own rules on real Crustdata-discovered companies.
+
+    Reference only: they are never contacted (handbook: agents stay in the room),
+    but the same activity and capacity checks show which real makers could
+    actually take this order. Every number is a fact cited to Crustdata."""
     cd = Crustdata(on_event=lambda kind, msg: store.emit("Verifier", kind, msg))
+    p = config.POLICY
     out = []
     for co in companies[:limit]:
         if not co.get("domain"):
@@ -152,25 +173,59 @@ def verify_real(store, companies, limit=3):
             data = cd.enrich_domain(co["domain"])
         except CrustdataError as e:
             store.emit("Verifier", "tool_error", f"Crustdata enrich failed for {co['name']}: {e} — marked unverifiable")
-            out.append({**co, "verdict": "UNVERIFIABLE"})
+            out.append({**co, "verdict": "UNVERIFIABLE", "reasons": [str(e)]})
             continue
         if not data:
-            out.append({**co, "verdict": "NO_RECORD"})
+            store.emit("Verifier", "real_company", f"{co['name']} ({co['domain']}): no Crustdata record — "
+                       "cannot verify, not guessing", {"company": co["name"]})
+            out.append({**co, "verdict": "NO_RECORD", "reasons": ["no Crustdata record"]})
             continue
         subj = f"real:{co['domain']}"
         src, url = "Crustdata /company/enrich", "https://api.crustdata.com/company/enrich"
         hc = dig(data, "headcount.total")
         yf = dig(data, "basic_info.year_founded")
-        hq = dig(data, "locations.headquarters")
-        for k, v in (("headcount", hc), ("year_founded", yf), ("headquarters", hq)):
+        hq = _short_place(dig(data, "locations.headquarters"))
+        status = dig(data, "basic_info.status")
+        hc6, hc6_date = _headcount_months_ago(data)
+        for k, v in (("headcount", hc), ("year_founded", yf), ("headquarters", hq), ("status", status),
+                     ("headcount_6mo_ago", {"value": hc6, "as_of": hc6_date} if hc6 else None)):
             if v is not None:
                 store.fact(subj, k, v, src, url)
-        active = bool(hc and hc > 0)
-        out.append({**co, "headcount": hc, "year_founded": yf, "headquarters": hq,
-                    "verdict": "REAL_ACTIVE" if active else "UNCLEAR"})
+        reasons = []
+        if status and status != "active":
+            reasons.append(f"Crustdata status '{status}'")
+        if not hc:
+            reasons.append("no headcount on record")
+        elif hc6 and hc < 0.7 * hc6:
+            reasons.append(f"headcount fell {hc6}→{hc} since {hc6_date}")
+        cap = need = None
+        if hc and spec and spec.get("latest_acceptable_delivery"):
+            cap = int(hc * p["production_share_of_headcount"] * p["units_per_worker_month"])
+            latest = datetime.date.fromisoformat(spec["latest_acceptable_delivery"])
+            prod_days = (latest - config.today()).days - transit_days(None, spec["delivery_city"]) - p["qc_days"]
+            need = int(spec["quantity"] / max(prod_days, 1) * 30) if prod_days > 0 else 10**9
+            store.fact(subj, "capacity_estimate", {"evidence": cap, "needed": need},
+                       "Verifier capacity model over Crustdata headcount")
+            if cap < need:
+                reasons.append(f"≈{cap:,}/month from {hc} staff, order needs ≈{need:,}/month")
+        if not reasons:
+            verdict = "ACTIVE_CAN_SUPPLY"
+        elif reasons == ["no headcount on record"]:
+            verdict = "UNVERIFIABLE"  # no evidence either way: say so instead of guessing
+        elif cap is not None and cap < need and len(reasons) == 1:
+            verdict = "ACTIVE_TOO_SMALL"
+        else:
+            verdict = "NOT_SUITABLE"
+        trend = f", {hc6} on {hc6_date}" if hc6 else ""
+        out.append({**co, "headcount": hc, "headcount_6mo_ago": hc6, "year_founded": yf, "headquarters": hq,
+                    "status": status, "capacity_month": cap, "needed_month": need, "verdict": verdict,
+                    "reasons": reasons})
         store.emit("Verifier", "real_company",
-                   f"Real company {co['name']} ({co['domain']}): headcount {hc}, founded {yf}, HQ {hq} — "
-                   f"source Crustdata. Reference only, not contacted.", {"company": co["name"]})
+                   f"Real company {co['name']} ({co['domain']}, {hq}): {status or 'status ?'}, headcount {hc}{trend}, "
+                   f"founded {yf} → {verdict}" + (f" ({'; '.join(reasons)})" if reasons else
+                                                  f" (≈{cap:,}/month ≥ ≈{need:,} needed)")
+                   + " — source Crustdata. Reference only, not contacted.",
+                   {"company": co["name"], "verdict": verdict})
     return out
 
 
@@ -179,7 +234,7 @@ def verify(store, spec, scouted):
     results = []
     for cand in sorted(scouted["candidates"], key=lambda c: c["unit_price_inr"]):
         results.append(store.run_step(f"verify:{cand['domain']}", lambda c=cand: verify_one(store, spec, c, registry)))
-    real = verify_real(store, scouted.get("real_companies") or []) if scouted.get("real_companies") else []
+    real = verify_real(store, scouted.get("real_companies") or [], spec) if scouted.get("real_companies") else []
     passed = [r for r in results if r["verdict"] == "PASS"]
     store.emit("Verifier", "done", f"{len(passed)} of {len(results)} suppliers passed: "
                + ", ".join(r["supplier"] for r in passed))

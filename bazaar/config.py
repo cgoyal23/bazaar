@@ -41,6 +41,32 @@ POLICY = {
 }
 
 
+_SSL = None
+
+
+def ssl_context():
+    """HTTPS context that also works on python.org macOS builds, which ship without
+    root certificates: fall back to certifi, then to the system bundle."""
+    global _SSL
+    if _SSL is None:
+        import ssl
+        ctx = ssl.create_default_context()
+        if not ctx.get_ca_certs():
+            cafile = None
+            try:
+                import certifi
+                cafile = certifi.where()
+            except ImportError:
+                for path in ("/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt"):
+                    if os.path.exists(path):
+                        cafile = path
+                        break
+            if cafile:
+                ctx = ssl.create_default_context(cafile=cafile)
+        _SSL = ctx
+    return _SSL
+
+
 def today() -> datetime.date:
     value = os.environ.get("BAZAAR_TODAY")
     return datetime.date.fromisoformat(value) if value else datetime.date.today()

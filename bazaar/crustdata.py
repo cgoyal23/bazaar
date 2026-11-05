@@ -4,11 +4,12 @@ and caches every response in SQLite so a resumed run spends no credits twice.
 import json
 import os
 import socket
+import ssl
 import time
 import urllib.error
 import urllib.request
 
-from . import db
+from . import config, db
 
 BASE = os.environ.get("CRUSTDATA_BASE", "https://api.crustdata.com")
 
@@ -52,7 +53,7 @@ class Crustdata:
                 headers={"authorization": f"Bearer {self.key}", "content-type": "application/json",
                          "x-api-version": "2025-11-01", "user-agent": "bazaar-procurement/1.0"})
             try:
-                with urllib.request.urlopen(req, timeout=timeout) as r:
+                with urllib.request.urlopen(req, timeout=timeout, context=config.ssl_context()) as r:
                     data = json.loads(r.read())
                 db.conn().execute("INSERT OR REPLACE INTO api_cache VALUES(?,?,?,?)",
                                   (cache_key, path, json.dumps(data), db.now()))
@@ -67,7 +68,13 @@ class Crustdata:
                     wait = min(max(wait, 1.0), 20.0)
                 else:
                     raise CrustdataError(f"{path}: HTTP {e.code}") from e
-            except (urllib.error.URLError, socket.timeout, TimeoutError, ValueError) as e:
+            except urllib.error.URLError as e:
+                if isinstance(e.reason, ssl.SSLCertVerificationError):
+                    raise CrustdataError(f"{path}: TLS certificate check failed — no CA bundle found "
+                                         "(pip install certifi, or run 'Install Certificates.command')") from e
+                last = f"URLError: {e.reason}"
+                wait = 2 ** attempt
+            except (socket.timeout, TimeoutError, ValueError) as e:
                 last = type(e).__name__
                 wait = 2 ** attempt
             if attempt < retries:
